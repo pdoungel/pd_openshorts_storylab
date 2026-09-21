@@ -255,3 +255,46 @@ def test_scene_search_supports_local_vector_mode_without_ollama(tmp_path):
     assert project.scenes[0].search_method == "local-vector"
     assert project.scenes[0].semantic_score > 0
     assert project.scenes[0].evidence_ids
+
+
+def test_embedding_provider_defaults_to_dependency_free_local(monkeypatch):
+    from storylab.embeddings import embedding_provider
+
+    monkeypatch.delenv("STORYLAB_EMBEDDING_PROVIDER", raising=False)
+    assert embedding_provider() == "local-vector"
+
+
+def test_auto_embedding_provider_falls_back_when_pretrained_backend_is_missing(monkeypatch):
+    import storylab.embeddings as embeddings
+
+    monkeypatch.setenv("STORYLAB_EMBEDDING_PROVIDER", "auto")
+    monkeypatch.setattr(
+        embeddings,
+        "_sentence_transformer_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ImportError("optional package missing")),
+    )
+    assert embeddings.embedding_provider() == "local-vector"
+    ranked = embeddings.rank_texts(
+        "Why did the character leave?",
+        ["The character left after the warning.", "A landscape is shown."],
+        mode="embedding",
+    )
+    assert ranked[0][4] == "local-vector"
+
+
+def test_pretrained_embedding_provider_can_be_used_with_a_fake_model(monkeypatch):
+    import storylab.embeddings as embeddings
+
+    class FakeModel:
+        def encode(self, texts, normalize_embeddings=True, convert_to_numpy=False):
+            return [[1.0, 0.0] if "leave" in text.lower() else [0.0, 1.0] for text in texts]
+
+    monkeypatch.setenv("STORYLAB_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setattr(embeddings, "_sentence_transformer_model", lambda *args, **kwargs: FakeModel())
+    ranked = embeddings.rank_texts(
+        "Why did the character leave?",
+        ["The character left after the warning.", "A landscape is shown."],
+        mode="embedding",
+    )
+    assert ranked[0][0] == 0
+    assert ranked[0][4] == "sentence-transformers"
