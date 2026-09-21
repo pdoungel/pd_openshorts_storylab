@@ -120,58 +120,72 @@ class StoryLabStore:
             project.status = "review"
         return self.save(project)
 
-    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0) -> StoryProject:
-        """Rank transcript/source evidence and merge nearby hits into coherent source scenes."""
+    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0, max_results: int = 12, search_mode: str = "hybrid") -> StoryProject:
+        """Find timestamp-backed source moments without requiring Ollama or a cloud API."""
+        from .embeddings import rank_texts
+
         project = self.get(project_id)
         if not project.analysis:
             raise ValueError("Analyze the project before searching scenes.")
         if not 0 <= context_seconds <= 30:
             raise ValueError("Scene context must be between 0 and 30 seconds.")
+        if not 1 <= max_results <= 40:
+            raise ValueError("Scene result count must be between 1 and 40.")
+        if search_mode not in {"hybrid", "embedding", "lexical"}:
+            raise ValueError("Search mode must be hybrid, embedding, or lexical.")
+
         wanted = set(evidence_ids or [])
-        candidates = [e for e in project.analysis.evidence if e.start is not None and e.end is not None and
-                      (not wanted or e.id in wanted)]
         query_text = " ".join(filter(None, [query, project.brief.question, project.analysis.story.central_question])).lower().strip()
-        terms = {t.strip(".,!?;:()[]{}\"'") for t in query_text.split()
-                 if len(t.strip(".,!?;:()[]{}\"'")) > 2}
-        ranked = []
+        if not query_text and not wanted:
+            query_text = project.title.lower().strip()
+
+        candidates = [
+            e for e in project.analysis.evidence
+            if e.start is not None and e.end is not None
+            and (not wanted or e.id in wanted) and e.source_id
+        ]
+        rows = []
         for item in candidates:
-            if not item.source_id:
-                continue
             source = next((s for s in project.sources if s.id == item.source_id), None)
             if not source or source.kind not in {"video", "audio"} or not source.path:
                 continue
-            haystack = " ".join((item.label, item.claim, item.supporting_text)).lower()
-            matches = sum(1 for term in terms if term in haystack)
-            if terms and matches == 0 and not wanted:
-                continue
-            lexical = matches / max(1, len(terms))
-            relevance = min(1.0, 0.5 * item.confidence + 0.5 * lexical) if terms else item.confidence
-            ranked.append((relevance, item, source))
-        ranked.sort(key=lambda row: row[0], reverse=True)
+            rows.append((item, source, " ".join(filter(None, [item.label, item.claim, item.supporting_text]))))
+        if not rows:
+            return self.save(project)
 
-        # Keep the strongest candidate for each evidence item and merge nearby hits
-        # from the same source so a sentence split across transcript cues becomes one usable scene.
-        selected = ranked[:40]
-        grouped: dict[str, list[tuple[float, object, object]]] = {}
-        for relevance, item, source in selected:
-            grouped.setdefault(source.id, []).append((relevance, item, source))
+        ranked = rank_texts(query_text, [row[2] for row in rows], mode=search_mode)
+        selected = []
+        for row_index, score, semantic_score, lexical_score, method in ranked[:max_results]:
+            item, source, _ = rows[row_index]
+            relevance = min(1.0, 0.65 * score + 0.35 * item.confidence)
+            selected.append((relevance, semantic_score, lexical_score, method, item, source))
+
+        grouped: dict[str, list[tuple[float, float, float, str, object, object]]] = {}
+        for row in selected:
+            grouped.setdefault(row[5].id, []).append(row)
         for source_rows in grouped.values():
-            source_rows.sort(key=lambda row: row[1].start or 0)
+            source_rows.sort(key=lambda row: row[4].start or 0)
             clusters = []
             for row in source_rows:
-                if not clusters or (row[1].start or 0) > clusters[-1]["end"] + context_seconds * 2:
-                    clusters.append({"start": row[1].start, "end": row[1].end, "rows": [row]})
+                if not clusters or (row[4].start or 0) > clusters[-1]["end"] + context_seconds * 2:
+                    clusters.append({"start": row[4].start, "end": row[4].end, "rows": [row]})
                 else:
-                    clusters[-1]["end"] = max(clusters[-1]["end"], row[1].end)
+                    clusters[-1]["end"] = max(clusters[-1]["end"], row[4].end)
                     clusters[-1]["rows"].append(row)
             for cluster in clusters:
-                rows = cluster["rows"]
-                evidence = [row[1] for row in rows]
-                relevance = max(row[0] for row in rows)
+                cluster_rows = cluster["rows"]
+                evidence = [row[4] for row in cluster_rows]
                 ids = [item.id for item in evidence]
+                relevance = max(row[0] for row in cluster_rows)
+                semantic_score = max(row[1] for row in cluster_rows)
+                lexical_score = max(row[2] for row in cluster_rows)
+                method = cluster_rows[0][3]
                 existing = next((s for s in project.scenes if s.query == query_text and set(s.evidence_ids) == set(ids)), None)
                 if existing:
                     existing.relevance = relevance
+                    existing.semantic_score = semantic_score
+                    existing.lexical_score = lexical_score
+                    existing.search_method = method
                     continue
                 project.scenes.append(Scene(
                     id=f"sn_{uuid.uuid4().hex[:10]}",
@@ -179,8 +193,11 @@ class StoryLabStore:
                     end=(cluster["end"] or 0) + context_seconds,
                     title=evidence[0].label or "Source moment",
                     purpose="; ".join(dict.fromkeys(item.claim for item in evidence if item.claim)),
-                    evidence_ids=ids, source_id=rows[0][2].id, source_file=rows[0][2].path,
-                    query=query_text, relevance=relevance, extraction_status="candidate",
+                    evidence_ids=ids, source_id=cluster_rows[0][5].id,
+                    source_file=cluster_rows[0][5].path, query=query_text,
+                    relevance=relevance, semantic_score=semantic_score,
+                    lexical_score=lexical_score, search_method=method,
+                    extraction_status="candidate",
                 ))
         project.scenes.sort(key=lambda s: s.relevance, reverse=True)
         return self.save(project)
