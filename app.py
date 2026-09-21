@@ -32,6 +32,7 @@ from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3
 import recut
 import layout_ranges
 import project_storage
+import storylab
 
 load_dotenv()
 
@@ -1777,6 +1778,7 @@ if BILLING_ENABLED:
 # cloud requires an osk_ API key, self-host keeps BYOK (see mcp_server.py).
 import mcp_server as _mcp_server
 app.include_router(_mcp_server.router)
+app.include_router(storylab.router)
 
 # Enable CORS for frontend. Cloud mode locks this down to the configured origins;
 # self-host keeps the permissive wildcard it has always used.
