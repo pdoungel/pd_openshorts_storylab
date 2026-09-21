@@ -6561,3 +6561,109 @@ async def saasshorts_voices(
         ],
         "source": "defaults",
     }
+
+
+# ---------------------------------------------------------------------------
+# Story Lab: long-form YouTube publishing
+# ---------------------------------------------------------------------------
+
+class StoryLabYouTubePublishRequest(BaseModel):
+    project_id: str
+    api_key: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+@app.post("/api/storylab/youtube/publish")
+async def storylab_youtube_publish(req: StoryLabYouTubePublishRequest, request: Request, background_tasks: BackgroundTasks):
+    """Publish the Story Lab long-form render to YouTube through Upload-Post.
+
+    The render must already exist and its editable YouTube package supplies the
+    title, description, tags, category, privacy and scheduling controls.
+    """
+    if BILLING_ENABLED:
+        await require_managed_entitlement(request)
+    from storylab.service import store as storylab_store
+
+    try:
+        project = storylab_store.get(req.project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Story Lab project not found")
+
+    if not project.youtube:
+        raise HTTPException(status_code=400, detail="Build the Story Lab video before publishing.")
+    if not project.renders:
+        raise HTTPException(status_code=400, detail="No rendered Story Lab video is available.")
+    artifact = project.renders[-1]
+    if artifact.status != "rendered" or not artifact.output_path or not os.path.isfile(artifact.output_path):
+        raise HTTPException(status_code=400, detail="Latest Story Lab render is not ready.")
+
+    upload_key, forced_profile = await resolve_upload_post(request, req.api_key)
+    if not upload_key:
+        raise HTTPException(status_code=400, detail="Missing Upload-Post API key")
+    post_user = forced_profile or req.user_id
+    if not post_user:
+        raise HTTPException(status_code=400, detail="Missing Upload-Post user profile")
+
+    package = project.youtube
+    publish_id = str(uuid.uuid4())
+    publish_jobs[publish_id] = {"status": "uploading", "result": None, "error": None}
+
+    def do_upload():
+        try:
+            url = "https://api.upload-post.com/api/upload"
+            headers = {"Authorization": f"Apikey {upload_key}"}
+            data_payload = {
+                "user": post_user,
+                "platform[]": ["youtube"],
+                "title": package.title,
+                "description": package.description,
+                "youtube_title": package.title,
+                "youtube_description": package.description,
+                "tags": package.tags,
+                "categoryId": package.category_id,
+                "privacyStatus": package.privacy_status,
+                "youtube_self_declared_made_for_kids": str(package.made_for_kids).lower(),
+                "youtube_contains_synthetic_media": str(package.contains_synthetic_media).lower(),
+                "async_upload": "true",
+                "external_id": f"storylab:{project.id}",
+            }
+            if package.publish_at:
+                data_payload["youtube_publish_at"] = package.publish_at
+                data_payload["privacyStatus"] = "private"
+
+            files = {
+                "video": (os.path.basename(artifact.output_path), open(artifact.output_path, "rb"), "video/mp4")
+            }
+            thumb_path = package.thumbnail_path
+            if thumb_path:
+                safe_thumb = _safe_under(OUTPUT_DIR, thumb_path.lstrip("/"))
+                if safe_thumb and os.path.isfile(safe_thumb):
+                    files["thumbnail"] = (os.path.basename(safe_thumb), open(safe_thumb, "rb"), "image/jpeg")
+
+            try:
+                with httpx.Client(timeout=600.0) as client:
+                    response = client.post(url, headers=headers, data=data_payload, files=files)
+            finally:
+                for handle in files.values():
+                    if hasattr(handle[1], "close"):
+                        handle[1].close()
+
+            if response.status_code not in [200, 201, 202]:
+                publish_jobs[publish_id]["status"] = "failed"
+                publish_jobs[publish_id]["error"] = f"Upload-Post API Error ({response.status_code}): {response.text}"
+            else:
+                publish_jobs[publish_id]["status"] = "done"
+                publish_jobs[publish_id]["result"] = response.json()
+        except Exception as exc:
+            publish_jobs[publish_id]["status"] = "failed"
+            publish_jobs[publish_id]["error"] = str(exc)
+
+    background_tasks.add_task(do_upload)
+    return {"publish_id": publish_id, "status": "uploading"}
+
+
+@app.get("/api/storylab/youtube/publish/status/{publish_id}")
+async def storylab_youtube_publish_status(publish_id: str):
+    if publish_id not in publish_jobs:
+        raise HTTPException(status_code=404, detail="Story Lab YouTube publish job not found")
+    return publish_jobs[publish_id]
