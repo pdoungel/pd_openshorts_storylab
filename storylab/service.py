@@ -9,9 +9,10 @@ from typing import Optional
 from .analyzer import analyze_story
 from .ingestion import ingest_file
 from .models import RenderArtifact, ReviewItem, Scene, StoryBuilder, StoryProject, StoryProjectCreate
-from .renderer import render_documentary, extract_scene
+from .renderer import render_documentary, extract_scene, mux_narration
 from .script import build_script
 from .youtube import build_youtube_package
+from .tts import generate_voiceover, voicebox_profiles, voicebox_status
 
 
 class StoryLabStore:
@@ -58,7 +59,7 @@ class StoryLabStore:
         # All Story Lab project data is namespaced by the validated UUID. Remove
         # the JSON record plus source snapshots, extracted scenes and renders.
         project_path.unlink()
-        for relative in (Path("sources") / project_id, Path("scenes") / project_id, Path("renders") / project_id):
+        for relative in (Path("sources") / project_id, Path("scenes") / project_id, Path("renders") / project_id, Path("voiceover") / project_id):
             path = self.root / relative
             if path.exists():
                 shutil.rmtree(path)
@@ -126,6 +127,7 @@ class StoryLabStore:
         project.reviews = []
         project.renders = []
         project.youtube = None
+        project.voiceover = None
         project.status = "ingested" if project.sources else "new"
         project.error = None
         return self.save(project)
@@ -194,6 +196,7 @@ class StoryLabStore:
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
         project.renders = []
         project.youtube = None
+        project.voiceover = None
         project.status = "review"
         project.error = None
         return self.save(project)
@@ -376,6 +379,45 @@ class StoryLabStore:
                         visual.notes = note
                     return self.save(project)
         raise ValueError("Unknown visual research item")
+
+    def voicebox_status(self) -> dict:
+        return voicebox_status()
+
+    def voicebox_profiles(self) -> list[dict]:
+        return voicebox_profiles()
+
+    def generate_voiceover(self, project_id: str, profile_id: str) -> StoryProject:
+        project = self.get(project_id)
+        if not project.script or not all(section.approved for section in project.script):
+            raise ValueError("Approve every script section before generating narration.")
+        if not project.renders or project.renders[-1].status != "rendered" or not project.renders[-1].output_path:
+            raise ValueError("Create the final video before generating narration.")
+        now = datetime.now(timezone.utc).isoformat()
+        from .models import VoiceoverArtifact
+        project.voiceover = VoiceoverArtifact(
+            status="generating", provider="voicebox", profile_id=profile_id, created_at=now
+        )
+        self.save(project)
+        try:
+            output_dir = self.root / "voiceover" / project.id
+            script_path, timing_path, audio_path = generate_voiceover(project, profile_id, output_dir)
+            final_video = Path(project.renders[-1].output_path)
+            voiced_video = final_video.with_name("storylab-final-voiceover.mp4")
+            mux_narration(str(final_video), audio_path, str(voiced_video))
+            project.voiceover = VoiceoverArtifact(
+                status="generated", provider="voicebox", profile_id=profile_id,
+                script_path=script_path, timing_path=timing_path, audio_path=audio_path,
+                created_at=now,
+            )
+            project.renders[-1].output_path = str(voiced_video)
+            project.status = "rendered"
+            project.error = None
+        except Exception as exc:
+            project.voiceover = VoiceoverArtifact(
+                status="error", provider="voicebox", profile_id=profile_id, error=str(exc), created_at=now
+            )
+            project.error = str(exc)
+        return self.save(project)
 
     def render(self, project_id: str) -> StoryProject:
         project = self.get(project_id)
