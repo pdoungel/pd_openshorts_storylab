@@ -382,6 +382,7 @@ def test_editable_story_builder_relinks_scenes(tmp_path):
     project.sources[0] = project.sources[0].model_copy(update={"kind":"video"})
     project = store.save(project)
     project = store.analyze(project.id)
+    project = store.search_scenes(project.id, query="warning changes plan", context_seconds=0)
     assert project.scenes
     story = project.analysis.story.model_copy(update={
         "hook": "Edited hook",
