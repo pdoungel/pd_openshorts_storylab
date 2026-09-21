@@ -22,6 +22,7 @@ import LoginModal from './components/LoginModal';
 import TrialGate from './components/TrialGate';
 import AdvancedBanner from './components/AdvancedBanner';
 import HistoryTab from './components/HistoryTab';
+import StoryLabTab from './components/StoryLabTab';
 import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
@@ -1072,7 +1073,8 @@ function App() {
     { id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
     { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History', short: 'history' }] : []),
-    { id: 'projects', ord: '07', icon: FolderOpen, label: 'Projects', short: 'projects' },
+    { id: 'projects', ord: '07', icon: FolderOpen, Film, label: 'Projects', short: 'projects' },
+    { id: 'storylab', ord: '09', icon: Film, label: 'Story Lab', short: 'story lab', primary: true },
     { id: 'settings', ord: '08', icon: Settings, label: 'Settings', short: 'settings' },
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
@@ -1792,6 +1794,15 @@ function App() {
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
                 <HistoryTab onReopenProject={restoreProject} />
+              </div>
+            </div>
+          )}
+
+          {/* View: Story Lab */}
+          {activeTab === 'storylab' && (
+            <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
+              <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
+                <StoryLabTab />
               </div>
             </div>
           )}
