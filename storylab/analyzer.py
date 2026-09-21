@@ -124,18 +124,49 @@ Return JSON matching the schema. Every story component must cite supplied excerp
         data, _ = llm_backend.generate_json(prompt, _LLMAnalysis)
         parsed = _LLMAnalysis.model_validate(data)
         allowed_insight_types = {"fact", "interpretation", "question", "theory", "counterpoint", "theme", "lore", "character", "event", "relationship"}
+        valid = lambda indexes: [evidence[i].id for i in indexes if 0 <= i < len(evidence)]
         insights = [Insight(id=f"in_{uuid.uuid4().hex[:10]}",
                            type=item.type if item.type in allowed_insight_types else "fact",
                            title=item.title, text=item.text,
                            evidence_ids=valid(item.evidence_indexes),
                            confidence=max(0, min(1, item.confidence))) for item in parsed.insights]
         theories = [Theory(id=f"th_{uuid.uuid4().hex[:10]}", title=item.title, claim=item.claim,
-                           evidence_ids=[evidence[index].id for index in item.evidence_indexes if 0 <= index < len(evidence)],
+                           evidence_ids=valid(item.evidence_indexes),
                            confidence=max(0, min(1, item.confidence))) for item in parsed.theories]
-        valid = lambda indexes: [evidence[i].id for i in indexes if 0 <= i < len(evidence)]
+        # Insights are the research layer that actively feeds the reusable story outline.
+        facts = [i for i in insights if i.type == "fact"]
+        interpretations = [i for i in insights if i.type in {"interpretation", "theory", "theme", "lore", "character"}]
+        counterpoints = [i for i in insights if i.type == "counterpoint"]
+        questions = [i for i in insights if i.type == "question"]
+        story = StoryBuilder(
+            hook=parsed.hook or (facts[0].text if facts else ""),
+            context=parsed.context or " ".join(i.text for i in facts[:3]),
+            timeline=parsed.timeline or [i.text for i in facts[:5]],
+            key_events=parsed.key_events or [i.text for i in insights if i.type == "event"][:5],
+            people=parsed.people or [i.text for i in insights if i.type in {"character", "relationship"}][:5],
+            conflict=parsed.conflict or (counterpoints[0].text if counterpoints else ""),
+            consequences=parsed.consequences or (facts[-1].text if facts else ""),
+            significance=parsed.significance or " ".join(i.text for i in interpretations[:2]),
+            central_question=parsed.central_question or (questions[0].text if questions else question),
+            interpretation=parsed.interpretation or " ".join(i.text for i in interpretations[:3]),
+            counterpoints=parsed.counterpoints or [i.text for i in counterpoints[:5]],
+            open_questions=parsed.open_questions or [i.text for i in questions[:5]],
+            hook_evidence_ids=valid(parsed.hook_evidence_indexes) or (facts[0].evidence_ids if facts else []),
+            context_evidence_ids=valid(parsed.context_evidence_indexes) or [eid for i in facts[:3] for eid in i.evidence_ids],
+            timeline_evidence_ids=grouped_valid(parsed.timeline_evidence_indexes) or [i.evidence_ids for i in facts[:5]],
+            key_event_evidence_ids=grouped_valid(parsed.key_event_evidence_indexes) or [i.evidence_ids for i in insights if i.type == "event"][:5],
+            people_evidence_ids=grouped_valid(parsed.people_evidence_indexes) or [i.evidence_ids for i in insights if i.type in {"character", "relationship"}][:5],
+            conflict_evidence_ids=valid(parsed.conflict_evidence_indexes) or (counterpoints[0].evidence_ids if counterpoints else []),
+            consequences_evidence_ids=valid(parsed.consequences_evidence_indexes) or (facts[-1].evidence_ids if facts else []),
+            significance_evidence_ids=valid(parsed.significance_evidence_indexes) or [eid for i in interpretations[:2] for eid in i.evidence_ids],
+            central_question_evidence_ids=valid(parsed.central_question_evidence_indexes) or (questions[0].evidence_ids if questions else []),
+            interpretation_evidence_ids=valid(parsed.interpretation_evidence_indexes) or [eid for i in interpretations[:3] for eid in i.evidence_ids],
+            counterpoint_evidence_ids=grouped_valid(parsed.counterpoint_evidence_indexes) or [i.evidence_ids for i in counterpoints[:5]],
+            open_question_evidence_ids=grouped_valid(parsed.open_question_evidence_indexes) or [i.evidence_ids for i in questions[:5]],
+        )
         grouped_valid = lambda groups: [valid(group) for group in groups]
         return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, insights=insights, theories=theories,
-                             story=StoryBuilder(
+                             story=story)
                                  hook=parsed.hook, context=parsed.context, timeline=parsed.timeline,
                                  key_events=parsed.key_events, people=parsed.people, conflict=parsed.conflict,
                                  consequences=parsed.consequences, significance=parsed.significance,
