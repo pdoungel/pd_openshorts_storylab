@@ -591,7 +591,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   <div className="flex flex-wrap gap-2">
     <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download><FileText size={13}/> download metadata JSON</a>
   </div>
-</div>}</div></div>}
+</div></div>}
 </div>}
       </section>
     </div>
