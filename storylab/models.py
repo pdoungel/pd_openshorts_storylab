@@ -68,6 +68,18 @@ class StoryBuilder(BaseModel):
     significance: str = ""
 
 
+class VisualResearchItem(BaseModel):
+    id: str
+    description: str
+    material_type: Literal["source_backed", "archival", "contextual", "generated", "graphic"]
+    evidence_ids: list[str] = Field(default_factory=list)
+    source_id: Optional[str] = None
+    asset_path: Optional[str] = None
+    source_url: Optional[str] = None
+    status: Literal["planned", "researching", "approved", "rejected"] = "planned"
+    notes: str = ""
+
+
 class VisualSuggestion(BaseModel):
     description: str
     material_type: Literal["source_backed", "contextual", "generated"]
@@ -81,6 +93,7 @@ class ScriptSection(BaseModel):
     narration: str
     evidence_ids: list[str] = Field(default_factory=list)
     visual_suggestions: list[VisualSuggestion] = Field(default_factory=list)
+    visual_research: list[VisualResearchItem] = Field(default_factory=list)
     source_pages: list[int] = Field(default_factory=list)
     source_timestamps: list[tuple[float, float]] = Field(default_factory=list)
     duration_seconds: float = Field(default=0, ge=0)
