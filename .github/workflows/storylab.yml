@@ -1,0 +1,27 @@
+name: Story Lab checks
+on:
+  push:
+    paths: ['storylab/**','dashboard/src/App.jsx','dashboard/src/components/StoryLabTab.jsx','app.py','.github/workflows/storylab.yml']
+  pull_request:
+    paths: ['storylab/**','dashboard/src/App.jsx','dashboard/src/components/StoryLabTab.jsx','app.py','.github/workflows/storylab.yml']
+jobs:
+  storylab-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install 'pydantic>=2,<3' pytest
+      - run: pytest -q storylab/tests
+      - run: python -m py_compile storylab/*.py
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '20', cache: npm, cache-dependency-path: dashboard/package-lock.json}
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm run build
+        working-directory: dashboard
