@@ -213,3 +213,45 @@ def test_scene_search_is_idempotent_for_same_query(tmp_path):
     project = store.search_scenes(project.id, query="reason", context_seconds=1)
     reason_scenes = [s for s in project.scenes if s.query == "reason"]
     assert len(reason_scenes) == 1
+
+
+def test_local_vector_embeddings_are_deterministic_without_external_service():
+    from storylab.embeddings import cosine, embed, rank_texts
+
+    first = embed("The character returns home after the warning.")
+    second = embed("The character returns home after the warning.")
+    assert first == second
+    assert 0.99 <= cosine(first, second) <= 1.0
+    ranked = rank_texts(
+        "Why did the character return home?",
+        ["The character returns home after the warning.", "A landscape is shown."],
+        mode="hybrid",
+    )
+    assert ranked[0][0] == 0
+    assert ranked[0][1] > ranked[1][1]
+
+
+def test_scene_search_supports_local_vector_mode_without_ollama(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text(
+        "1\n00:00:10,000 --> 00:00:12,000\nThe character returns home after the warning.\n"
+        "\n2\n00:00:30,000 --> 00:00:32,000\nA landscape is shown.\n",
+        encoding="utf-8",
+    )
+    project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.analyze(project.id)
+    project.scenes = []
+    project = store.search_scenes(
+        project.id,
+        query="Why did the character return home?",
+        context_seconds=2,
+        search_mode="embedding",
+        max_results=1,
+    )
+    assert len(project.scenes) == 1
+    assert project.scenes[0].search_method == "local-vector"
+    assert project.scenes[0].semantic_score > 0
+    assert project.scenes[0].evidence_ids
