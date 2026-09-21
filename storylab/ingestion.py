@@ -56,20 +56,69 @@ def _seconds(value: str) -> float:
 
 
 def _timed_segments(text: str, source_id: str) -> list[TranscriptSegment]:
-    if text.lstrip().startswith("{"):
+    """Parse timed transcript formats defensively.
+
+    One malformed JSON cue must not discard valid cues from the same file.
+    WebVTT/SRT timestamps may be HH:MM:SS.mmm or MM:SS.mmm.
+    """
+    if text.lstrip().startswith("{") or text.lstrip().startswith("["):
         try:
             data = json.loads(text)
             rows = data.get("segments", data) if isinstance(data, dict) else data
-            return [TranscriptSegment(text=str(row["text"]).strip(), start=float(row["start"]), end=float(row["end"]), source_id=source_id)
-                    for row in rows if row.get("text") and row.get("start") is not None and row.get("end") is not None]
-        except (ValueError, TypeError, KeyError):
+            if isinstance(rows, list):
+                segments = []
+                for row in rows:
+                    if not isinstance(row, dict) or not row.get("text"):
+                        continue
+                    if row.get("start") is None or row.get("end") is None:
+                        continue
+                    try:
+                        start = float(row["start"])
+                        end = float(row["end"])
+                    except (TypeError, ValueError):
+                        continue
+                    if start < 0 or end <= start:
+                        continue
+                    segments.append(
+                        TranscriptSegment(
+                            text=str(row["text"]).strip(),
+                            start=start,
+                            end=end,
+                            source_id=source_id,
+                        )
+                    )
+                if segments:
+                    return segments
+        except (ValueError, TypeError, json.JSONDecodeError):
             pass
+
     segments = []
-    pattern = re.compile(r"(?:^|\n)(?:\d+\s*\n)?(\d{1,2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3})[^\n]*\n(.*?)(?=\n\s*\n|\Z)", re.S)
+    pattern = re.compile(
+        r"(?:^|\n)(?:\d+\s*\n)?"
+        r"(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{3})\s*-->\s*"
+        r"(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{3})[^\n]*\n"
+        r"(.*?)(?=\n\s*\n|\Z)",
+        re.S,
+    )
     for match in pattern.finditer(text):
         words = " ".join(match.group(3).split())
-        if words:
-            segments.append(TranscriptSegment(text=words, start=_seconds(match.group(1)), end=_seconds(match.group(2)), source_id=source_id))
+        if not words:
+            continue
+        try:
+            start = _seconds(match.group(1))
+            end = _seconds(match.group(2))
+        except ValueError:
+            continue
+        if end <= start:
+            continue
+        segments.append(
+            TranscriptSegment(
+                text=words,
+                start=start,
+                end=end,
+                source_id=source_id,
+            )
+        )
     return segments
 
 
