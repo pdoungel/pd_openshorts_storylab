@@ -79,6 +79,16 @@ async def create_project(payload: StoryProjectCreate):
 async def get_project(project_id: str):
     return _project_or_404(lambda: store.get(project_id))
 
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    try:
+        store.delete(project_id)
+        return {"deleted": True, "project_id": project_id}
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
 
 
 
