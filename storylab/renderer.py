@@ -30,7 +30,7 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
     clips, manifest_sections = [], []
     for section in project.script:
         row = {"id": section.id, "heading": section.heading, "narration": section.narration,
-               "duration_seconds": section.duration_seconds, "visuals": [visual.model_dump() for visual in section.visual_suggestions]}
+               "duration_seconds": section.duration_seconds, "visuals": [visual.model_dump() for visual in section.visual_suggestions], "visual_research": [item.model_dump() for item in section.visual_research]}
         for visual in section.visual_suggestions:
             if visual.material_type != "source_backed":
                 continue
