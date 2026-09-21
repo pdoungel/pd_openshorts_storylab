@@ -109,6 +109,7 @@ class StoryLabStore:
             self.save(project)
             self.search_scenes(project.id)
             self.link_scenes_to_script(project.id)
+            self._prepare_script_scenes(project.id)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
@@ -192,6 +193,7 @@ class StoryLabStore:
         project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
         self.save(project)
         self.link_scenes_to_script(project_id)
+        self._prepare_script_scenes(project_id)
         project = self.get(project_id)
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
         project.renders = []
@@ -328,6 +330,22 @@ class StoryLabStore:
                         linked.append(scene_id)
             section.scene_ids = linked
         return self.save(project)
+
+    def _prepare_script_scenes(self, project_id: str) -> StoryProject:
+        """Make linked source visuals immediately usable by Final Assembly."""
+        project = self.get(project_id)
+        linked_ids = []
+        for section in project.script:
+            for scene_id in section.scene_ids:
+                if scene_id not in linked_ids:
+                    linked_ids.append(scene_id)
+        if not linked_ids:
+            return self.save(project)
+        for scene in project.scenes:
+            scene.selected = scene.id in linked_ids
+        self.save(project)
+        self.extract_scenes(project_id, linked_ids)
+        return self.get(project_id)
 
     def select_scenes(self, project_id: str, scene_ids: list[str]) -> StoryProject:
         """Persist the exact source scenes the final long-form assembly should use."""
