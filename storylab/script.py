@@ -38,8 +38,8 @@ def _fallback_slice(evidence: list[Evidence], start: int, stop: int) -> list[Evi
     return evidence[start:stop] if evidence else []
 
 
-def build_script(analysis: StoryAnalysis) -> list[ScriptSection]:
-    """Turn the reviewed story structure into a traceable documentary outline.
+def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "movie") -> list[ScriptSection]:
+    """Build a reusable outline for any Story Lab format or editorial angle.
 
     Prefer the evidence IDs attached by the research/analyzer stage. The
     positional fallback keeps older projects readable after schema upgrades.
@@ -55,21 +55,58 @@ def build_script(analysis: StoryAnalysis) -> list[ScriptSection]:
         context_evidence = _evidence_by_ids(analysis, story.context_evidence_ids) or _fallback_slice(evidence, 0, 3)
         sections.append(_section("Context", story.context, context_evidence))
 
-    events = story.key_events[:5] or analysis.themes[:5]
-    for index, event in enumerate(events):
-        ids = story.key_event_evidence_ids[index] if index < len(story.key_event_evidence_ids) else []
-        event_evidence = _evidence_by_ids(analysis, ids) or _fallback_slice(evidence, index, index + 2)
-        sections.append(_section(f"Key event {index + 1}", event, event_evidence))
+    if angle == "why":
+        plans = [
+            ("The question", story.central_question or story.context, story.central_question_evidence_ids or story.context_evidence_ids),
+            ("What the sources establish", story.context or analysis.summary, story.context_evidence_ids),
+            ("The explanation", story.interpretation or story.conflict, story.interpretation_evidence_ids or story.conflict_evidence_ids),
+            ("Counterpoints", " ".join(story.counterpoints) or "Test the explanation against contrary evidence.", [i for group in story.counterpoint_evidence_ids for i in group]),
+            ("Implications", story.significance or story.consequences, story.significance_evidence_ids or story.consequences_evidence_ids),
+        ]
+    elif angle == "theory":
+        plans = [
+            ("The question", story.central_question or story.hook, story.central_question_evidence_ids or story.hook_evidence_ids),
+            ("What is canon", story.context, story.context_evidence_ids),
+            ("The theory", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
+            ("Evidence for and against", " ".join(story.counterpoints) or "Separate supporting clues from evidence that weakens the theory.", [i for group in story.counterpoint_evidence_ids for i in group] or story.significance_evidence_ids),
+            ("What remains unknown", " ".join(story.open_questions) or "Mark unresolved points instead of presenting them as fact.", [i for group in story.open_question_evidence_ids for i in group]),
+        ]
+    elif angle == "character":
+        plans = [
+            ("Character setup", story.context or story.hook, story.context_evidence_ids or story.hook_evidence_ids),
+            ("Motivation and stakes", story.conflict, story.conflict_evidence_ids),
+            ("Turning points", " ".join(story.key_events[:5]), [i for group in story.key_event_evidence_ids for i in group]),
+            ("Relationships", " ".join(story.people), [i for group in story.people_evidence_ids for i in group]),
+            ("Character meaning", story.significance or story.interpretation, story.significance_evidence_ids or story.interpretation_evidence_ids),
+        ]
+    elif angle in {"theme", "lore", "worldbuilding"}:
+        plans = [
+            ("Setup", story.context or story.hook, story.context_evidence_ids or story.hook_evidence_ids),
+            ("Evidence in the story", " ".join(story.key_events[:5]), [i for group in story.key_event_evidence_ids for i in group]),
+            ("Patterns and meaning", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
+            ("Open questions", " ".join(story.open_questions) or "Identify gaps that require more source material.", [i for group in story.open_question_evidence_ids for i in group]),
+        ]
+    elif angle == "ending":
+        plans = [
+            ("What leads to the ending", story.context, story.context_evidence_ids),
+            ("The final turning point", story.key_events[-1] if story.key_events else story.consequences, story.key_event_evidence_ids[-1] if story.key_event_evidence_ids else story.consequences_evidence_ids),
+            ("What the ending establishes", story.consequences, story.consequences_evidence_ids),
+            ("Possible interpretations", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
+            ("What remains ambiguous", " ".join(story.open_questions) or "Mark unresolved ambiguity.", [i for group in story.open_question_evidence_ids for i in group]),
+        ]
+    else:
+        plans = [
+            ("Context", story.context, story.context_evidence_ids or _fallback_slice(evidence, 0, 3)),
+            ("Key development", " ".join(story.key_events[:5]), [i for group in story.key_event_evidence_ids for i in group]),
+            ("Conflict and stakes", story.conflict, story.conflict_evidence_ids),
+            ("Consequences", story.consequences, story.consequences_evidence_ids),
+            ("Meaning / takeaway", story.significance or story.interpretation, story.significance_evidence_ids or story.interpretation_evidence_ids),
+        ]
 
-    if story.conflict:
-        conflict_evidence = _evidence_by_ids(analysis, story.conflict_evidence_ids) or evidence[-3:]
-        sections.append(_section("Conflict", story.conflict, conflict_evidence))
-
-    if story.consequences:
-        consequence_evidence = _evidence_by_ids(analysis, story.consequences_evidence_ids) or evidence[-2:]
-        sections.append(_section("Consequences", story.consequences, consequence_evidence))
-
-    conclusion = story.significance or "Return to the central question and distinguish documented evidence from interpretation."
-    significance_evidence = _evidence_by_ids(analysis, story.significance_evidence_ids) or evidence[-2:]
-    sections.append(_section("Significance", conclusion, significance_evidence))
+    for heading, narration, ids in plans:
+        if narration:
+            linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
+            if not linked:
+                linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
+            sections.append(_section(heading, narration, linked))
     return sections
