@@ -73,27 +73,6 @@ def _is_lyric_like(text: str) -> bool:
     return False
 
 
-def _clean_subtitle_text(value: str) -> str:
-    """Normalize subtitle markup so HTML/ASS-style tags never reach Story Lab."""
-    value = html.unescape(value or "")
-    value = re.sub(r"<[^>]+>", "", value)
-    value = re.sub(r"\\{\\[^}]+\\}", "", value)
-    value = re.sub(r"\\s+", " ", value).strip()
-    return value
-
-
-def _is_lyric_like(text: str) -> bool:
-    """Reject common karaoke/lyrics cues, matching the Shorts subtitle safeguard."""
-    tokens = text.split()
-    if len(tokens) >= 10:
-        single_char_tokens = sum(1 for token in tokens if len(re.sub(r"[^A-Za-z]", "", token)) <= 1)
-        if single_char_tokens / len(tokens) >= 0.70:
-            return True
-    if re.search(r"(?:♪|♫|♬|🎵|🎶)", text) and len(tokens) <= 20:
-        return True
-    return False
-
-
 def _seconds(value: str) -> float:
     parts = value.strip().replace(",", ".").split(":")
     return sum(float(part) * 60 ** index for index, part in enumerate(reversed(parts)))
@@ -123,9 +102,12 @@ def _timed_segments(text: str, source_id: str) -> list[TranscriptSegment]:
                         continue
                     if start < 0 or end <= start:
                         continue
+                    cleaned = _clean_subtitle_text(str(row["text"]))
+                    if not cleaned or _is_lyric_like(cleaned):
+                        continue
                     segments.append(
                         TranscriptSegment(
-                            text=str(row["text"]).strip(),
+                            text=cleaned,
                             start=start,
                             end=end,
                             source_id=source_id,
