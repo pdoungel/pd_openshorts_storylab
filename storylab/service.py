@@ -101,6 +101,19 @@ class StoryLabStore:
             project.status = "error"; project.error = str(exc)
         return self.save(project)
 
+    def update_brief(self, project_id: str, brief) -> StoryProject:
+        """Replace the editorial brief and invalidate derived analysis/script/scene state."""
+        project = self.get(project_id)
+        project.brief = brief
+        project.analysis = None
+        project.script = []
+        project.scenes = []
+        project.reviews = []
+        project.renders = []
+        project.status = "ingested" if project.sources else "new"
+        project.error = None
+        return self.save(project)
+
     def review(self, project_id: str, target_type: str, target_id: str, status: str, note: str = "") -> StoryProject:
         project = self.get(project_id)
         if target_type == "script" and target_id not in {section.id for section in project.script}:
