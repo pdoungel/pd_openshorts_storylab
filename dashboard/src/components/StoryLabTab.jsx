@@ -203,6 +203,32 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     finally { setYoutubePublishing(false); }
   };
 
+  const updateStoryField = (field, value) => {
+    setStoryDraft(prev => ({ ...(prev || {}), [field]: value }));
+    setStoryDirty(true);
+  };
+
+  const scenesForEvidence = (evidenceIds = []) => {
+    const wanted = new Set(evidenceIds || []);
+    return (selected?.scenes || []).filter(scene =>
+      (scene.evidence_ids || []).some(id => wanted.has(id))
+    );
+  };
+
+  const saveStory = async () => {
+    if (!selected || !storyDraft) return;
+    setLoading(true); setError('');
+    try {
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/story', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(storyDraft)
+      }));
+      setStoryDirty(false);
+    } catch (e) { setError(e.message || 'Could not save story builder.'); }
+    finally { setLoading(false); }
+  };
+
   const render = async () => {
     setLoading(true); setError('');
     try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/render', { method:'POST' })); }
