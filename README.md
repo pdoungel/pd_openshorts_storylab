@@ -302,6 +302,12 @@ know:
   back to the plain face-tracking crop, and a silent video fails with a
   message that says so. Add a key alongside `LLM_BASE_URL` and you get both.
 
+## Story Lab: local search without Ollama
+
+Story Lab can search timestamped source material without Ollama, a cloud embedding API, or a downloaded embedding model. It uses a small deterministic local vectorizer over word and character features and combines that signal with exact lexical overlap and evidence confidence. Search modes are **Hybrid local**, **Vector only**, and **Exact words**.
+
+This keeps the Story Lab evidence → scene → clip workflow available on a storage-constrained machine. A pretrained embedding provider can be added later without changing the provenance model.
+
 ## Technical Pipeline
 
 ### Clip Generator
