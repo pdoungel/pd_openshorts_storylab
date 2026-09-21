@@ -71,23 +71,31 @@ def _fallback_analysis(title: str, transcript: str, evidence: list[Evidence]) ->
                                 title="Open research question",
                                 text="What remains unsupported or ambiguous in the available material?",
                                 evidence_ids=[item.id for item in evidence[:2]], confidence=0.5))
-    return StoryAnalysis(
-        summary=summary, evidence=evidence, insights=insights,
-        story=StoryBuilder(hook=summary[:300], context=summary[:600], timeline=excerpts, key_events=excerpts,
-                           people=[], conflict="Identify the competing goals in the cited material before making an interpretive claim.",
-                           consequences="Use the cited record to explain what changed.",
-                           significance="Separate what the sources establish from the story's interpretation.",
-                           central_question="What is the most useful question this material can answer?",
-                           interpretation="Keep interpretation visibly separate from source-established facts.",
-                           open_questions=["What remains unsupported or ambiguous in the available material?"],
-                           hook_evidence_ids=ids[:1], context_evidence_ids=ids[:2],
-                           timeline_evidence_ids=grouped, key_event_evidence_ids=grouped,
-                           conflict_evidence_ids=ids[:2], consequences_evidence_ids=ids[:2],
-                           significance_evidence_ids=ids[:2],
-                           central_question_evidence_ids=ids[:2],
-                           interpretation_evidence_ids=ids[:2],
-                           open_question_evidence_ids=[ids[:2]] if ids else []),
+    fact_insights = [i for i in insights if i.type == "fact"]
+    event_insights = [i for i in insights if i.type == "event"]
+    question_insights = [i for i in insights if i.type == "question"]
+    story = StoryBuilder(
+        hook=fact_insights[0].text if fact_insights else summary[:300],
+        context=" ".join(i.text for i in fact_insights[:3]) or summary[:600],
+        timeline=[i.text for i in fact_insights[:5]],
+        key_events=[i.text for i in event_insights[:5]] or excerpts,
+        people=[i.text for i in insights if i.type in {"character", "relationship"}][:5],
+        conflict="Identify the competing goals in the cited material before making an interpretive claim.",
+        consequences=fact_insights[-1].text if fact_insights else "Use the cited record to explain what changed.",
+        significance="Separate what the sources establish from the story's interpretation.",
+        central_question=question_insights[0].text if question_insights else "What is the most useful question this material can answer?",
+        interpretation="Keep interpretation visibly separate from source-established facts.",
+        open_questions=[i.text for i in question_insights[:5]] or ["What remains unsupported or ambiguous in the available material?"],
+        hook_evidence_ids=fact_insights[0].evidence_ids if fact_insights else ids[:1],
+        context_evidence_ids=[eid for i in fact_insights[:3] for eid in i.evidence_ids] or ids[:2],
+        timeline_evidence_ids=[i.evidence_ids for i in fact_insights[:5]],
+        key_event_evidence_ids=[i.evidence_ids for i in event_insights[:5]] or grouped,
+        people_evidence_ids=[i.evidence_ids for i in insights if i.type in {"character", "relationship"}][:5],
+        conflict_evidence_ids=ids[:2], consequences_evidence_ids=fact_insights[-1].evidence_ids if fact_insights else ids[:2],
+        significance_evidence_ids=ids[:2], central_question_evidence_ids=question_insights[0].evidence_ids if question_insights else ids[:2],
+        interpretation_evidence_ids=ids[:2], open_question_evidence_ids=[i.evidence_ids for i in question_insights[:5]] or ([ids[:2]] if ids else []),
     )
+    return StoryAnalysis(summary=summary, evidence=evidence, insights=insights, story=story)
 
 
 def analyze_story(title: str, transcript: str = "", duration: Optional[float] = None,
