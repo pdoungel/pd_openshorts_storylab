@@ -164,6 +164,21 @@ class RenderArtifact(BaseModel):
     created_at: str
 
 
+class YouTubePackage(BaseModel):
+    """Editable YouTube-ready publishing metadata for the rendered long-form video."""
+    title: str = ""
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    category_id: str = "22"
+    language: str = "en"
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    made_for_kids: bool = False
+    contains_synthetic_media: bool = False
+    thumbnail_path: Optional[str] = None
+    publish_at: Optional[str] = None
+    chapters: list[str] = Field(default_factory=list)
+
+
 class Scene(BaseModel):
     id: str
     start: float = Field(ge=0)
@@ -180,6 +195,7 @@ class Scene(BaseModel):
     lexical_score: float = Field(default=0.0, ge=0, le=1)
     search_method: Literal["hybrid-local-vector", "hybrid-sentence-transformers", "local-vector", "sentence-transformers", "lexical"] = "hybrid-local-vector"
     extraction_status: Literal["candidate", "extracted", "error"] = "candidate"
+    selected: bool = True
 
 
 class StoryAnalysis(BaseModel):
@@ -208,4 +224,5 @@ class StoryProject(BaseModel):
     script: list[ScriptSection] = Field(default_factory=list)
     reviews: list[ReviewItem] = Field(default_factory=list)
     renders: list[RenderArtifact] = Field(default_factory=list)
+    youtube: Optional[YouTubePackage] = None
     error: Optional[str] = None
