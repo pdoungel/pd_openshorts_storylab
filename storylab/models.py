@@ -43,6 +43,7 @@ class SourceLocator(BaseModel):
     text: str = ""
     segments: list[TranscriptSegment] = Field(default_factory=list)
     checksum: Optional[str] = None
+    ingestion_source: str = "uploaded"
     created_at: str
 
 
