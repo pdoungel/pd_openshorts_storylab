@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import html
 import json
 import mimetypes
 import re
@@ -259,7 +258,6 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
             text = transcript.get("text", "")
             segments = []
             ingestion_source = "local_asr"
-            ingestion_source = "local_asr"
             for row in transcript.get("segments", []):
                 if not row.get("text") or row.get("start") is None or row.get("end") is None:
                     continue
@@ -271,11 +269,8 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
                     continue
     return SourceLocator(id=source_id, name=source_name or path.name, kind=kind, path=str(path.resolve()),
                          mime_type=mimetypes.guess_type(path.name)[0], page_count=page_count, duration=duration,
-                         text=text, segments=segments, checksum=_hash(path), ingestion_source=ingestion_source, created_at=_stamp()) raise ValueError("Unsupported Story Lab source. Use video, audio, PDF, transcript, or text.")
-    return kind
+                         text=text, segments=segments, checksum=_hash(path), ingestion_source=ingestion_source, created_at=_stamp())
 
-
-def _stamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
