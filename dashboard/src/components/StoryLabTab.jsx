@@ -490,7 +490,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <button className="btn-primary" disabled={loading || selected.status !== 'approved'} onClick={render}><Clapperboard size={14}/> create final video</button>
   </div>
 </div>}
-{selected.renders?.length>0 && <>
+{selected.renders?.length>0 && <div className="space-y-4">
 <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
@@ -539,7 +539,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   <div className="flex flex-wrap gap-2">
     <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download><FileText size={13}/> download metadata JSON</a>
   </div>
-</div>}</div></>}
+</div>}</div></div>}
 </div>
       </section>
     </div>
