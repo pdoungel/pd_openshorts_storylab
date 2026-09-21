@@ -84,8 +84,11 @@ class StoryLabStore:
         project = self.get(project_id)
         project.status = "analyzing"; self.save(project)
         try:
-            project.analysis = analyze_story(project.title, transcript, duration, project.sources)
-            project.script = build_script(project.analysis)
+            project.analysis = analyze_story(
+                project.title, transcript, duration, project.sources,
+                angle=project.brief.angle, kind=project.kind
+            )
+            project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
