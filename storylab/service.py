@@ -322,6 +322,11 @@ class StoryLabStore:
         selected = set(scene_ids)
         for scene in project.scenes:
             scene.selected = scene.id in selected
+        project = self.save(project)
+        # Selection is the production hand-off: extract newly selected source
+        # moments immediately so the final assembly never waits for a second
+        # manual extraction step.
+        project = self.extract_scenes(project_id, list(selected))
         self.link_scenes_to_script(project_id)
         return self.save(self.get(project_id))
 
