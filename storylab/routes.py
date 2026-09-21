@@ -22,6 +22,11 @@ class TextSourceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=500000)
 
 
+class SceneRequest(BaseModel):
+    scene_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class ReviewRequest(BaseModel):
     target_type: str
     target_id: str
@@ -82,6 +87,16 @@ async def upload_source(project_id: str, file: UploadFile = File(...), transcrib
 @router.post("/projects/{project_id}/analyze")
 async def analyze_project(project_id: str, payload: AnalyzeRequest):
     return _project_or_404(lambda: store.analyze(project_id, payload.transcript, payload.duration))
+
+
+@router.post("/projects/{project_id}/scenes/search")
+async def search_scenes(project_id: str, payload: SceneRequest):
+    return _project_or_404(lambda: store.search_scenes(project_id, payload.evidence_ids))
+
+
+@router.post("/projects/{project_id}/scenes/extract")
+async def extract_scenes(project_id: str, payload: SceneRequest):
+    return _project_or_404(lambda: store.extract_scenes(project_id, payload.scene_ids))
 
 
 @router.post("/projects/{project_id}/review")
