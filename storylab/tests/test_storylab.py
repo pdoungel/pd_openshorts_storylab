@@ -57,3 +57,17 @@ def test_visual_research_is_seeded_and_reviewable(tmp_path):
     assert visual.status=="planned" and visual.evidence_ids
     project=store.review_visual(project.id,visual.id,"approved","Checked against source")
     assert project.script[0].visual_research[0].status=="approved"
+
+
+def test_script_sections_preserve_story_evidence_links(tmp_path):
+    store=StoryLabStore(str(tmp_path))
+    project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
+    project=store.ingest_text(project.id,"First documented event happened here.\n\nA second source passage follows.")
+    project=store.analyze(project.id)
+    hook=project.script[0]
+    assert hook.heading=="Hook"
+    assert hook.evidence_ids==project.analysis.story.hook_evidence_ids
+    assert hook.evidence_ids
+    event_sections=[section for section in project.script if section.heading.startswith("Key event")]
+    if event_sections and project.analysis.story.key_event_evidence_ids:
+        assert event_sections[0].evidence_ids==project.analysis.story.key_event_evidence_ids[0]
