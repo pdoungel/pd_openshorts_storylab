@@ -50,6 +50,10 @@ class YouTubePackageRequest(BaseModel):
     publish_at: str | None = None
 
 
+class VoiceoverRequest(BaseModel):
+    profile_id: str = Field(min_length=1, max_length=200)
+
+
 class ReviewRequest(BaseModel):
     target_type: str
     target_id: str
@@ -164,6 +168,24 @@ async def review_visual(project_id: str, payload: ReviewRequest):
     return _project_or_404(lambda: store.review_visual(project_id, payload.target_id, payload.status, payload.note))
 
 
+@router.get("/voicebox/status")
+async def voicebox_status():
+    return store.voicebox_status()
+
+
+@router.get("/voicebox/profiles")
+async def voicebox_profiles():
+    try:
+        return {"profiles": store.voicebox_profiles()}
+    except Exception as exc:
+        raise HTTPException(503, str(exc))
+
+
+@router.post("/projects/{project_id}/voiceover")
+async def generate_project_voiceover(project_id: str, payload: VoiceoverRequest):
+    return _project_or_404(lambda: store.generate_voiceover(project_id, payload.profile_id))
+
+
 @router.post("/projects/{project_id}/render")
 async def render_project(project_id: str):
     return _project_or_404(lambda: store.render(project_id))
@@ -185,6 +207,36 @@ async def download_render(project_id: str):
     if root not in path.parents or not path.is_file():
         raise HTTPException(404, "Rendered file is not available.")
     return FileResponse(str(path), media_type="video/mp4", filename=f"{project.title[:80]}.mp4")
+
+
+@router.get("/projects/{project_id}/download/narration")
+async def download_narration(project_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    if not project.voiceover or not project.voiceover.script_path:
+        raise HTTPException(404, "Narration script has not been generated.")
+    path = Path(project.voiceover.script_path).resolve()
+    root = store.root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Narration script is not available.")
+    return FileResponse(str(path), media_type="text/plain; charset=utf-8", filename=f"{project.title[:80]}.narration.txt")
+
+
+@router.get("/projects/{project_id}/download/narration-srt")
+async def download_narration_srt(project_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    if not project.voiceover or not project.voiceover.timing_path:
+        raise HTTPException(404, "Narration timing has not been generated.")
+    path = Path(project.voiceover.timing_path).resolve()
+    root = store.root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Narration timing is not available.")
+    return FileResponse(str(path), media_type="application/x-subrip", filename=f"{project.title[:80]}.narration.srt")
 
 
 @router.get("/projects/{project_id}/download/metadata")
