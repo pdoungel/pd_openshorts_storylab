@@ -33,6 +33,8 @@ export default function StoryLabTab() {
   const [sceneQuery, setSceneQuery] = useState('');
   const [sceneSearchMode, setSceneSearchMode] = useState('hybrid');
   const [sceneEmbeddingProvider, setSceneEmbeddingProvider] = useState('local');
+  const [storyDraft, setStoryDraft] = useState(null);
+  const [storyDirty, setStoryDirty] = useState(false);
 
   const replaceProject = (project) => { setSelected(project); setProjects(prev => prev.map(p => p.id === project.id ? project : p)); };
 
@@ -41,6 +43,12 @@ export default function StoryLabTab() {
     catch (e) { setError(e.message || 'Could not load Story Lab projects.'); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (selected?.analysis?.story) {
+      setStoryDraft(selected.analysis.story);
+      setStoryDirty(false);
+    }
+  }, [selected?.id, selected?.analysis?.story]);
 
   const create = async () => {
     if (!title.trim()) return;
@@ -180,24 +188,57 @@ export default function StoryLabTab() {
     <input className="input-field" placeholder="Tone (e.g. analytical)" value={selected.brief?.tone || 'clear'} onChange={e=>replaceProject({...selected,brief:{...(selected.brief||{}),tone:e.target.value}})} onBlur={e=>saveBrief({tone:e.target.value})}/>
   </div>
 </div><p className="text-xs text-muted mt-3">{selected.analysis.story?.conflict}</p></div><div className="rounded-input border border-rule p-4"><div className="flex items-center gap-2 text-brass mb-2"><Lightbulb size={15}/><span className="readout">THEORIES</span></div><p className="text-xs text-muted">Interpretation stays separate from evidence.</p></div></div>}
-{selected.analysis && <div className="space-y-3">
-  <div className="flex items-center justify-between"><span className="readout">STORY BUILDER</span><span className="text-[11px] text-muted">source-linked structure</span></div>
+{selected.analysis && storyDraft && <div className="space-y-3">
+  <div className="flex items-center justify-between">
+    <div><span className="readout">STORY BUILDER</span><div className="text-[11px] text-muted mt-1">Editable story claims with insight → evidence → scene provenance.</div></div>
+    <button className="btn-primary" disabled={loading || !storyDirty} onClick={saveStory}>{loading ? 'saving…' : storyDirty ? 'save story' : 'saved'}</button>
+  </div>
   <div className="grid md:grid-cols-2 gap-3">
     {[
-      ['Central question', selected.analysis.story?.central_question, selected.analysis.story?.central_question_evidence_ids],
-      ['Interpretation', selected.analysis.story?.interpretation, selected.analysis.story?.interpretation_evidence_ids],
-      ['Counterpoints', selected.analysis.story?.counterpoints?.join(' '), selected.analysis.story?.counterpoint_evidence_ids?.flat()],
-      ['Open questions', selected.analysis.story?.open_questions?.join(' '), selected.analysis.story?.open_question_evidence_ids?.flat()],
-      ['Hook', selected.analysis.story?.hook, selected.analysis.story?.hook_evidence_ids],
-      ['Context', selected.analysis.story?.context, selected.analysis.story?.context_evidence_ids],
-      ['Conflict', selected.analysis.story?.conflict, selected.analysis.story?.conflict_evidence_ids],
-      ['Consequences', selected.analysis.story?.consequences, selected.analysis.story?.consequences_evidence_ids],
-      ['Significance', selected.analysis.story?.significance, selected.analysis.story?.significance_evidence_ids]
-    ].map(([label,text,ids]) => text ? <div key={label} className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">{label}</div><p className="text-sm text-ink2 mt-1 leading-relaxed">{text}</p><div className="flex flex-wrap gap-1 mt-2">{evidenceById(ids).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'} · {e.id.slice(-6)}</span>)}</div></div> : null)}
+      ['central_question','Central question'],
+      ['hook','Hook'],
+      ['context','Context'],
+      ['conflict','Conflict'],
+      ['consequences','Consequences'],
+      ['significance','Significance'],
+      ['interpretation','Interpretation']
+    ].map(([field,label]) => {
+      const ids = storyDraft.component_insight_ids?.[field] || [];
+      const evidenceIds = storyDraft[field+'_evidence_ids'] || [];
+      const insights = (selected.analysis.insights || []).filter(i => ids.includes(i.id));
+      const scenes = scenesForEvidence(evidenceIds);
+      return <div key={field} className="rounded-input border border-rule p-3">
+        <div className="text-xs uppercase tracking-wide text-brass">{label}</div>
+        <textarea className="input-field w-full mt-2 min-h-24 resize-y" value={storyDraft[field] || ''} onChange={e=>updateStoryField(field,e.target.value)} />
+        <div className="flex flex-wrap gap-1 mt-2">
+          {insights.map(i => <span key={i.id} className="text-[10px] rounded border border-brass/40 px-1.5 py-0.5 text-muted">{i.type} · {i.title}</span>)}
+          {evidenceById(evidenceIds).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'} · evidence</span>)}
+          {scenes.map(scene => <span key={scene.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">scene · {scene.start.toFixed(1)}s</span>)}
+        </div>
+      </div>;
+    })}
   </div>
-  {selected.analysis.story?.timeline?.length > 0 && <div className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">Timeline</div><div className="mt-2 space-y-2">{selected.analysis.story.timeline.map((item,index) => <div key={index} className="flex gap-2 text-sm text-ink2"><span className="text-muted">{String(index+1).padStart(2,'0')}</span><div><div>{item}</div><div className="flex flex-wrap gap-1 mt-1">{evidenceById(selected.analysis.story.timeline_evidence_ids?.[index] || []).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'}</span>)}</div></div></div>)}</div></div>}
-  {selected.analysis.story?.key_events?.length > 0 && <div className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">Key Events</div><div className="mt-2 space-y-2">{selected.analysis.story.key_events.map((item,index) => <div key={index} className="text-sm text-ink2"><span className="text-muted mr-2">{index+1}.</span>{item}</div>)}</div></div>}
-  {selected.analysis.story?.people?.length > 0 && <div className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">People / Actors</div><div className="mt-2 space-y-2">{selected.analysis.story.people.map((item,index) => <div key={index} className="text-sm text-ink2"><span className="text-muted mr-2">{index+1}.</span>{item}</div>)}</div></div>}
+  <div className="grid md:grid-cols-3 gap-3">
+    {[
+      ['timeline','Timeline', storyDraft.timeline || []],
+      ['key_events','Key events', storyDraft.key_events || []],
+      ['people','People / relationships', storyDraft.people || []],
+      ['counterpoints','Counterpoints', storyDraft.counterpoints || []],
+      ['open_questions','Open questions', storyDraft.open_questions || []]
+    ].map(([field,label,items]) => {
+      const ids = storyDraft.component_insight_ids?.[field] || [];
+      const evidenceGroups = storyDraft[field+'_evidence_ids'] || [];
+      const flatEvidence = Array.isArray(evidenceGroups) && evidenceGroups.every(x=>Array.isArray(x)) ? evidenceGroups.flat() : evidenceGroups;
+      return <div key={field} className="rounded-input border border-rule p-3">
+        <div className="text-xs uppercase tracking-wide text-brass">{label}</div>
+        <textarea className="input-field w-full mt-2 min-h-28 resize-y" value={(items || []).join('\n')} onChange={e=>updateStoryField(field,e.target.value.split('\n').map(v=>v.trim()).filter(Boolean))} />
+        <div className="flex flex-wrap gap-1 mt-2">
+          {(selected.analysis.insights || []).filter(i=>ids.includes(i.id)).map(i=><span key={i.id} className="text-[10px] rounded border border-brass/40 px-1.5 py-0.5 text-muted">{i.type} · {i.title}</span>)}
+          {evidenceById(flatEvidence).map(e=><span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">evidence · {e.id.slice(-6)}</span>)}
+        </div>
+      </div>;
+    })}
+  </div>
 </div>}
 {selected.analysis?.insights?.length>0 && <div className="space-y-3">
   <div className="flex items-center justify-between"><span className="readout">STORY INTELLIGENCE</span><span className="text-[11px] text-muted">{selected.analysis.insights.length} reviewable insight(s)</span></div>
