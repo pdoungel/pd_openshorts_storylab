@@ -335,3 +335,37 @@ def test_unknown_insight_review_is_rejected(tmp_path):
         assert "Unknown insight" in str(exc)
     else:
         raise AssertionError("unknown insight should be rejected")
+
+
+def test_insights_drive_story_and_script():
+    from storylab.models import Evidence, Insight, StoryAnalysis, StoryBuilder
+    from storylab.script import build_script
+
+    evidence = [
+        Evidence(id="ev_fact", label="Fact", claim="The warning changes the character's plan.", supporting_text="The warning changes the character's plan.", traceability="source"),
+        Evidence(id="ev_event", label="Turning point", claim="The character leaves.", supporting_text="The character leaves.", traceability="source"),
+    ]
+    insights = [
+        Insight(id="in_fact", type="fact", title="Plan changes", text="The warning changes the character's plan.", evidence_ids=["ev_fact"], confidence=0.95, status="approved"),
+        Insight(id="in_event", type="event", title="Departure", text="The character leaves.", evidence_ids=["ev_event"], confidence=0.9, status="approved"),
+        Insight(id="in_question", type="question", title="Why leave?", text="What forces the departure?", evidence_ids=["ev_event"], confidence=0.8, status="approved"),
+    ]
+    analysis = StoryAnalysis(
+        summary="A turning point.",
+        evidence=evidence,
+        insights=insights,
+        story=StoryBuilder(
+            context="",
+            key_events=[],
+            central_question="",
+            context_evidence_ids=[],
+            key_event_evidence_ids=[],
+            central_question_evidence_ids=[],
+        ),
+    )
+    script = build_script(analysis, angle="why")
+    assert script
+    question = next(section for section in script if section.heading == "The question")
+    assert "What forces the departure?" in question.narration
+    assert "in_question" in question.insight_ids
+    assert "ev_event" in question.evidence_ids
