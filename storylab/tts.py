@@ -134,7 +134,6 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
                 "profile_id": profile_id,
                 "text": section.narration.strip(),
                 "language": "en",
-                "model_size": "1.7B",
             },
             timeout=1800,
         )
