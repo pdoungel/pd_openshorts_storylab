@@ -82,6 +82,7 @@ export default function StoryLabTab() {
   };
 
   const evidenceStatus = (evidenceId) => selected?.reviews?.find(r => r.target_type === 'evidence' && r.target_id === evidenceId)?.status || 'pending';
+  const insightStatus = (insightId) => selected?.reviews?.find(r => r.target_type === 'insight' && r.target_id === insightId)?.status || 'pending';
 
   const evidenceById = (ids = []) => {
     const lookup = Object.fromEntries((selected?.analysis?.evidence || []).map(item => [item.id, item]));
@@ -98,7 +99,7 @@ export default function StoryLabTab() {
     try {
       replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/review', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({target_type:'evidence', target_id:evidence.id, status})
+        body: JSON.stringify({target_type:evidence.type ? 'insight' : 'evidence', target_id:evidence.id, status})
       }));
     } catch (e) { setError(e.message || 'Could not update evidence review.'); }
     finally { setLoading(false); }
@@ -202,8 +203,8 @@ export default function StoryLabTab() {
   <div className="flex items-center justify-between"><span className="readout">STORY INTELLIGENCE</span><span className="text-[11px] text-muted">{selected.analysis.insights.length} reviewable insight(s)</span></div>
   <div className="grid md:grid-cols-2 gap-3">
     {selected.analysis.insights.map(insight => {
-      const reviewStatus = evidenceStatus(insight.id);
-      const status = insight.status || reviewStatus;
+      const reviewStatus = insightStatus(insight.id);
+      const status = reviewStatus === 'pending' ? (insight.status || 'unreviewed') : reviewStatus;
       return <div key={insight.id} className="rounded-input border border-rule p-3">
         <div className="flex items-center justify-between gap-2"><div className="text-xs uppercase tracking-wide text-brass">{insight.type}</div><span className="text-[10px] uppercase text-muted">{status}</span></div>
         <div className="text-sm text-ink mt-1">{insight.title}</div>
