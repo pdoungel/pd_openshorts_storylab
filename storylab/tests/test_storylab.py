@@ -1,5 +1,5 @@
 from storylab.models import StoryProjectCreate,Evidence
-from storylab.evidence import normalize_evidence
+from storylab.evidence import normalize_evidence,extract_source_evidence
 from storylab.service import StoryLabStore
 def test_evidence_is_clamped_to_duration():
     item=Evidence(id="e1",start=-2,end=99,label="x",claim="y"); normalized=normalize_evidence([item],duration=10); assert normalized[0].start==0; assert normalized[0].end==10
@@ -7,3 +7,24 @@ def test_store_create_and_reload(tmp_path):
     store=StoryLabStore(str(tmp_path)); p=store.create(StoryProjectCreate(title="Test film",kind="movie")); assert store.get(p.id).title=="Test film"; assert store.list()[0].id==p.id
 def test_store_analysis_fallback(tmp_path):
     store=StoryLabStore(str(tmp_path)); p=store.create(StoryProjectCreate(title="Test film",kind="movie")); r=store.analyze(p.id,"A transcript with enough text to survive the fallback path."); assert r.status=="analyzed"; assert r.analysis is not None; assert r.script
+
+def test_text_ingestion_creates_page_or_timestamp_traceable_evidence(tmp_path):
+    store=StoryLabStore(str(tmp_path)); project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
+    ingested=store.ingest_text(project.id,"First documented event happened here.\n\nA second source passage follows.")
+    result=store.analyze(ingested.id)
+    assert result.sources[0].kind=="text"
+    assert result.analysis.evidence[0].source_id==result.sources[0].id
+    # Plain text has no page or timing; it is a quote, but not a precise citation.
+    assert result.analysis.evidence[0].traceability=="unverified"
+
+def test_timed_transcript_is_source_traceable_and_requires_approval(tmp_path):
+    store=StoryLabStore(str(tmp_path)); project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
+    source=tmp_path/"record.srt"; source.write_text("1\n00:00:01,000 --> 00:00:03,000\nA documented event occurs.\n",encoding="utf-8")
+    project=store.ingest(project.id,str(source)); project=store.analyze(project.id)
+    evidence=project.analysis.evidence[0]
+    assert evidence.traceability=="source" and evidence.start==1.0
+    try: store.render(project.id)
+    except ValueError as exc: assert "Approve" in str(exc)
+    else: assert False, "render must not bypass review"
+    for section in project.script: project=store.review(project.id,"script",section.id,"approved")
+    assert project.status=="approved"
