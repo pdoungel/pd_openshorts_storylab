@@ -901,3 +901,25 @@ def transcribe_media(media_path):
         transcript
     )
 
+
+
+def transcribe_media_local(media_path):
+    """Transcribe locally without translation or cloud API.
+
+    Story Lab retains the language actually present in the source. The regular
+    transcribe_media path intentionally returns English and may invoke Gemini;
+    this entry point is the zero-cost local alternative.
+    """
+    if not _has_audio_stream(media_path):
+        raise NoAudioError("This media has no audio track.")
+    backend = os.environ.get("TRANSCRIBE_BACKEND", "whisper").strip().lower()
+    if backend == "parakeet":
+        try:
+            transcript = _transcribe_with_parakeet(media_path)
+            reason = _parakeet_fallback_reason(transcript)
+            if reason is None:
+                return transcript
+            print(f"⚠️ [Story Lab ASR] parakeet rejected ({reason}) — falling back to whisper")
+        except Exception as exc:
+            print(f"⚠️ [Story Lab ASR] parakeet failed ({type(exc).__name__}: {exc}) — falling back to whisper")
+    return _transcribe_with_whisper(media_path)
