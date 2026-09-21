@@ -105,6 +105,13 @@ def test_timed_evidence_becomes_extractable_scene(tmp_path):
     source.write_text("1\n00:00:10,000 --> 00:00:12,500\nA key reveal happens.\n", encoding="utf-8")
     project = store.ingest(project.id, str(source))
     project = store.analyze(project.id)
+    # Scene search requires a media source; the timed transcript supplies the
+    # evidence coordinates, while this fixture promotes the source record to
+    # a media locator without invoking ffmpeg.
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.save(project)
+    project.scenes = []
+    project = store.search_scenes(project.id)
     assert project.scenes
     scene = project.scenes[0]
     assert scene.evidence_ids == [project.analysis.evidence[0].id]
