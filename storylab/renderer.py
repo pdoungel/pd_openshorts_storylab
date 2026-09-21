@@ -28,19 +28,30 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
     output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
     sources = {source.id: source for source in project.sources}
     clips, manifest_sections = [], []
+    seen_clip_paths = set()
     for section in project.script:
         row = {"id": section.id, "heading": section.heading, "narration": section.narration,
                "duration_seconds": section.duration_seconds, "scene_ids": list(section.scene_ids),
                "visuals": [visual.model_dump() for visual in section.visual_suggestions],
                "visual_research": [item.model_dump() for item in section.visual_research]}
         linked_scenes = [scene for scene in project.scenes if scene.id in section.scene_ids]
+        linked_clip_count = 0
         for scene in linked_scenes:
+            clip = None
             if scene.output_file and os.path.isfile(scene.output_file):
                 clip = Path(scene.output_file)
+            elif scene.source_file and scene.start is not None and scene.end is not None:
+                clip = output_dir / f"{scene.id}.mp4"
+                extract_scene(scene.source_file, str(clip), scene.start, scene.end)
+            if clip is None:
+                continue
+            if str(clip) not in seen_clip_paths:
                 clips.append(clip)
-                row.setdefault("source_clips", []).append(str(clip))
-                row.setdefault("scene_clips", []).append({"scene_id": scene.id, "path": str(clip)})
-        if not linked_scenes:
+                seen_clip_paths.add(str(clip))
+            row.setdefault("source_clips", []).append(str(clip))
+            row.setdefault("scene_clips", []).append({"scene_id": scene.id, "path": str(clip)})
+            linked_clip_count += 1
+        if linked_clip_count == 0:
             for visual in section.visual_suggestions:
                 if visual.material_type != "source_backed":
                     continue
@@ -51,7 +62,9 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
                         continue
                     clip = output_dir / f"{section.id}_{evidence.id}.mp4"
                     extract_scene(source.path, str(clip), evidence.start, evidence.end)
-                    clips.append(clip)
+                    if str(clip) not in seen_clip_paths:
+                        clips.append(clip)
+                        seen_clip_paths.add(str(clip))
                     row.setdefault("source_clips", []).append(str(clip))
                     row.setdefault("scene_clips", []).append({"scene_id": next((s.id for s in project.scenes if s.evidence_ids == [evidence.id]), None), "path": str(clip)})
         manifest_sections.append(row)
