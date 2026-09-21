@@ -8,8 +8,8 @@ from typing import Optional
 
 from .analyzer import analyze_story
 from .ingestion import ingest_file
-from .models import RenderArtifact, ReviewItem, StoryProject, StoryProjectCreate
-from .renderer import render_documentary
+from .models import RenderArtifact, ReviewItem, Scene, StoryProject, StoryProjectCreate
+from .renderer import render_documentary, extract_scene
 from .script import build_script
 
 
@@ -89,6 +89,9 @@ class StoryLabStore:
                 angle=project.brief.angle, kind=project.kind, question=project.brief.question
             )
             project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
+            project.scenes = []
+            self.save(project)
+            self.search_scenes(project.id)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
@@ -114,6 +117,49 @@ class StoryLabStore:
             project.status = "approved"
         elif project.status != "error":
             project.status = "review"
+        return self.save(project)
+
+    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None) -> StoryProject:
+        project = self.get(project_id)
+        if not project.analysis:
+            raise ValueError("Analyze the project before searching scenes.")
+        wanted = set(evidence_ids or [])
+        evidence = [item for item in project.analysis.evidence if item.start is not None and item.end is not None and (not wanted or item.id in wanted)]
+        existing = {scene.id for scene in project.scenes}
+        for item in evidence:
+            if not item.source_id:
+                continue
+            if any(scene.evidence_ids == [item.id] for scene in project.scenes):
+                continue
+            source = next((src for src in project.sources if src.id == item.source_id), None)
+            if not source or source.kind not in {"video", "audio"} or not source.path:
+                continue
+            project.scenes.append(Scene(
+                id=f"sn_{uuid.uuid4().hex[:10]}",
+                start=item.start, end=item.end, title=item.label or "Source moment",
+                purpose=item.claim, evidence_ids=[item.id], source_file=source.path,
+                relevance=item.confidence, extraction_status="candidate",
+            ))
+        return self.save(project)
+
+    def extract_scenes(self, project_id: str, scene_ids: list[str] | None = None) -> StoryProject:
+        project = self.get(project_id)
+        target_ids = set(scene_ids or [scene.id for scene in project.scenes if scene.extraction_status == "candidate"])
+        output_dir = self.root / "scenes" / project.id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for scene in project.scenes:
+            if scene.id not in target_ids or scene.extraction_status == "extracted":
+                continue
+            if not scene.source_file:
+                scene.extraction_status = "error"
+                continue
+            try:
+                output = output_dir / f"{scene.id}.mp4"
+                extract_scene(scene.source_file, str(output), scene.start, scene.end)
+                scene.output_file = str(output)
+                scene.extraction_status = "extracted"
+            except Exception:
+                scene.extraction_status = "error"
         return self.save(project)
 
     def review_visual(self, project_id: str, visual_id: str, status: str, note: str = "") -> StoryProject:
