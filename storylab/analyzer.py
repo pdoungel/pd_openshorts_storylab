@@ -151,8 +151,8 @@ EDITORIAL ANGLE: {angle}
 CENTRAL QUESTION: {question or "Choose the most useful question supported by the supplied material."}
 Adapt the analysis to the chosen lens:
 - story: plot/structure, stakes, turning points, payoff
-- why: answer a focused why-question using evidence and competing explanations
-- theory: separate canon/source facts from hypotheses, supporting clues, and counterpoints
+- why: answer the user's exact why-question; identify the competing explanations, evidence for each, and the best-supported interpretation without presenting interpretation as canon
+- theory: explicitly state the theory/hypothesis, the canon facts it depends on, supporting clues, contradictions/counterpoints, and what would falsify or confirm it
 - character: motivations, relationships, development, and evidence
 - theme: recurring ideas, motifs, conflicts, and evidence
 - lore/worldbuilding: rules, history, factions, terminology, and gaps
@@ -201,7 +201,7 @@ Return JSON matching the schema. Every story component must cite supplied excerp
             conflict=_clean_generated_text(parsed.conflict or (counterpoints[0].text if counterpoints else "")),
             consequences=_clean_generated_text(parsed.consequences or (facts[-1].text if facts else "")),
             significance=_clean_generated_text(parsed.significance or " ".join(i.text for i in interpretations[:2])),
-            central_question=_clean_generated_text(parsed.central_question or (questions[0].text if questions else question)),
+            central_question=_clean_generated_text(question or parsed.central_question or (questions[0].text if questions else "")),
             interpretation=_clean_generated_text(parsed.interpretation or " ".join(i.text for i in interpretations[:3])),
             counterpoints=_clean_generated_list(parsed.counterpoints or [i.text for i in counterpoints[:5]]),
             open_questions=_clean_generated_list(parsed.open_questions or [i.text for i in questions[:5]]),
