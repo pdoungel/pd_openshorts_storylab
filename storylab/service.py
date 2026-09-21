@@ -408,8 +408,6 @@ class StoryLabStore:
         project = self.get(project_id)
         if not project.script or not all(section.approved for section in project.script):
             raise ValueError("Approve every script section before generating narration.")
-        if not project.renders or project.renders[-1].status != "rendered" or not project.renders[-1].output_path:
-            raise ValueError("Create the final video before generating narration.")
         now = datetime.now(timezone.utc).isoformat()
         from .models import VoiceoverArtifact
         project.voiceover = VoiceoverArtifact(
@@ -419,16 +417,11 @@ class StoryLabStore:
         try:
             output_dir = self.root / "voiceover" / project.id
             script_path, timing_path, audio_path = generate_voiceover(project, profile_id, output_dir)
-            final_video = Path(project.renders[-1].output_path)
-            voiced_video = final_video.with_name("storylab-final-voiceover.mp4")
-            mux_narration(str(final_video), audio_path, str(voiced_video))
             project.voiceover = VoiceoverArtifact(
                 status="generated", provider="voicebox", profile_id=profile_id,
                 script_path=script_path, timing_path=timing_path, audio_path=audio_path,
                 created_at=now,
             )
-            project.renders[-1].output_path = str(voiced_video)
-            project.status = "rendered"
             project.error = None
         except Exception as exc:
             project.voiceover = VoiceoverArtifact(
