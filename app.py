@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3, list_actor_gallery, upload_video_to_gallery, list_video_gallery
 import recut
 import layout_ranges
+import project_storage
 
 load_dotenv()
 
@@ -2812,6 +2813,199 @@ async def get_source_video(job_id: str, request: Request,
     if not source_path:
         raise HTTPException(status_code=404, detail="Source not found")
     return FileResponse(source_path, media_type="video/mp4")
+
+
+@app.get("/api/projects/{job_id}/storage")
+async def get_project_storage(job_id: str, request: Request):
+    """Inspect local storage used by a project without modifying anything."""
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    record = _job_record(job_id)
+
+    if BILLING_ENABLED:
+        # A project may exist in the cloud database even when its local job
+        # record has been purged. Verify ownership from the database in that
+        # case rather than relying on the in-memory jobs dictionary.
+        from sqlalchemy import select
+        from cloud.auth import get_current_user_required
+        from cloud.models import Project
+        from cloud import database as cloud_db
+
+        user = await get_current_user_required(request)
+
+        if record is not None:
+            await _assert_job_owner(request, record)
+        else:
+            async with cloud_db.session() as s:
+                project = (await s.execute(
+                    select(Project).where(Project.job_id == job_id)
+                )).scalar_one_or_none()
+
+            if project is None or str(project.user_id) != str(user.id):
+                raise HTTPException(status_code=404, detail="Project not found")
+    elif record is not None:
+        await _assert_job_owner(request, record)
+
+    try:
+        return project_storage.inspect_project(
+            job_id,
+            UPLOAD_DIR,
+            OUTPUT_DIR,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project files not found")
+
+
+async def _assert_project_storage_owner(job_id: str, request: Request):
+    """Verify ownership for a project storage operation.
+
+    In cloud mode, the project may exist in the database even when its local
+    job record has already been purged. In self-host mode there is no
+    multi-tenant ownership boundary.
+    """
+    record = _job_record(job_id)
+
+    if not BILLING_ENABLED:
+        if record is not None:
+            await _assert_job_owner(request, record)
+        return
+
+    from sqlalchemy import select
+    from cloud.auth import get_current_user_required
+    from cloud.models import Project
+    from cloud import database as cloud_db
+
+    user = await get_current_user_required(request)
+
+    if record is not None:
+        await _assert_job_owner(request, record)
+        return
+
+    async with cloud_db.session() as s:
+        project = (await s.execute(
+            select(Project).where(Project.job_id == job_id)
+        )).scalar_one_or_none()
+
+    if project is None or str(project.user_id) != str(user.id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+
+@app.delete("/api/projects/{job_id}/source")
+async def delete_project_source(job_id: str, request: Request):
+    """Delete only the original source video for a project."""
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await _assert_project_storage_owner(job_id, request)
+
+    if not os.path.isdir(os.path.join(OUTPUT_DIR, job_id)):
+        upload_matches = glob.glob(
+            os.path.join(UPLOAD_DIR, f"{glob.escape(job_id)}_*")
+        )
+        if not upload_matches:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        result = project_storage.delete_source(
+            job_id,
+            UPLOAD_DIR,
+            OUTPUT_DIR,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project files not found")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not delete source video: {exc}",
+        )
+
+    return result
+
+
+@app.post("/api/projects/{job_id}/clean")
+async def clean_project_storage(job_id: str, request: Request):
+    """Remove the source and disposable intermediate files for a project."""
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await _assert_project_storage_owner(job_id, request)
+
+    try:
+        result = project_storage.clean_project(
+            job_id,
+            UPLOAD_DIR,
+            OUTPUT_DIR,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project files not found")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not clean project storage: {exc}",
+        )
+
+    return result
+
+
+@app.get("/api/local-projects")
+async def list_local_projects(request: Request):
+    """List locally stored projects for the self-hosted Projects/Storage UI."""
+    projects = []
+
+    try:
+        entries = os.listdir(OUTPUT_DIR)
+    except FileNotFoundError:
+        return {"projects": []}
+
+    for job_id in entries:
+        if job_id == os.path.basename(THUMBNAILS_DIR):
+            continue
+
+        job_path = os.path.join(OUTPUT_DIR, job_id)
+
+        if not os.path.isdir(job_path):
+            continue
+
+        # Only treat directories with metadata as actual projects.
+        json_files = glob.glob(
+            os.path.join(job_path, "*_metadata.json")
+        )
+        if not json_files:
+            continue
+
+        try:
+            metadata_path = json_files[0]
+
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            base_name = os.path.basename(metadata_path).replace(
+                "_metadata.json", ""
+            )
+
+            clips = data.get("shorts", [])
+
+            projects.append({
+                "job_id": job_id,
+                "title": base_name,
+                "clip_count": len(clips),
+                "size_bytes": project_storage._dir_size(job_path),
+                "created_at": os.path.getctime(job_path),
+                "updated_at": os.path.getmtime(job_path),
+            })
+
+        except Exception as exc:
+            print(
+                f"⚠️ Could not read local project {job_id}: {exc}"
+            )
+
+    projects.sort(
+        key=lambda project: project["updated_at"],
+        reverse=True,
+    )
+
+    return {"projects": projects}
 
 
 @app.get("/api/jobs/{job_id}/download-all")

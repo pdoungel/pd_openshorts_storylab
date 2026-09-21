@@ -393,6 +393,10 @@ class NoAudioError(Exception):
     """The media has no audio track — nothing to transcribe."""
 
 
+class TranslationUnavailableError(Exception):
+    """English translation is unavailable for the detected language."""
+
+
 def _has_audio_stream(media_path) -> bool:
     """True if the file has at least one audio stream (ffprobe)."""
     import subprocess
@@ -407,31 +411,493 @@ def _has_audio_stream(media_path) -> bool:
         return True  # probe failed — don't block, let the backend try
 
 
+def _probe_subtitle_streams(media_path):
+    """Return embedded subtitle streams with their language/title metadata."""
+    import json
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "s",
+            "-show_entries",
+            "stream=index,codec_name:stream_tags=language,title",
+            "-of", "json",
+            media_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if result.returncode != 0:
+        return []
+
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return []
+
+    streams = []
+    for stream in data.get("streams", []):
+        tags = stream.get("tags") or {}
+        language = (tags.get("language") or "").strip().lower()
+        title = (tags.get("title") or "").strip()
+
+        streams.append({
+            "index": stream.get("index"),
+            "codec": stream.get("codec_name"),
+            "language": language,
+            "title": title,
+        })
+
+    return streams
+
+
+def _subtitle_language_is_english(language, title=""):
+    """Recognize common English language codes/names."""
+    value = f"{language} {title}".lower()
+
+    english_values = (
+        "eng",
+        "en",
+        "english",
+        "en-us",
+        "en-gb",
+        "en_us",
+        "en_gb",
+    )
+
+    return any(
+        value == item or value.startswith(item + " ")
+        for item in english_values
+    )
+
+
+def _extract_subtitle_stream(media_path, stream_index):
+    """Extract an embedded subtitle stream as SRT text."""
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "ffmpeg", "-v", "error",
+            "-i", media_path,
+            "-map", f"0:{stream_index}",
+            "-c:s", "srt",
+            "-f", "srt",
+            "pipe:1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Could not extract subtitle stream {stream_index}: "
+            f"{result.stderr.strip()}"
+        )
+
+    return result.stdout
+
+
+def _parse_srt_timestamp(value):
+    """Convert SRT timestamp to seconds."""
+    value = value.strip().replace(",", ".")
+    hours, minutes, seconds = value.split(":")
+
+    return (
+        int(hours) * 3600
+        + int(minutes) * 60
+        + float(seconds)
+    )
+
+
+def _parse_srt(srt_text):
+    """Parse SRT into timestamped subtitle cues."""
+    import re
+
+    blocks = re.split(r"\n\s*\n", srt_text.strip())
+    cues = []
+
+    for block in blocks:
+        lines = [line.strip("\ufeff") for line in block.splitlines()]
+
+        if len(lines) < 3:
+            continue
+
+        timestamp_line = next(
+            (line for line in lines if " --> " in line),
+            None,
+        )
+
+        if not timestamp_line:
+            continue
+
+        try:
+            start_text, end_text = timestamp_line.split(" --> ", 1)
+            start = _parse_srt_timestamp(start_text)
+            end = _parse_srt_timestamp(end_text)
+        except Exception:
+            continue
+
+        timestamp_index = lines.index(timestamp_line)
+        subtitle_text = " ".join(
+            line.strip()
+            for line in lines[timestamp_index + 1:]
+            if line.strip()
+        )
+
+        subtitle_text = re.sub(r"<[^>]+>", "", subtitle_text).strip()
+
+        if not subtitle_text:
+            continue
+
+        # Ignore karaoke/opening/ending subtitle cues that have been
+        # converted into long sequences of individual letters.
+        tokens = subtitle_text.split()
+        if len(tokens) >= 10:
+            single_char_tokens = sum(
+                1 for token in tokens
+                if len(re.sub(r"[^A-Za-z]", "", token)) <= 1
+            )
+            if single_char_tokens / len(tokens) >= 0.70:
+                continue
+
+        cues.append({
+            "start": float(start),
+            "end": float(end),
+            "text": subtitle_text,
+        })
+
+    return cues
+
+
+def _words_for_cue(text, start, end):
+    """Approximate word timings across a subtitle cue."""
+    import re
+
+    words = text.split()
+    if not words:
+        return []
+
+    duration = max(float(end) - float(start), 0.01)
+    step = duration / len(words)
+
+    result = []
+
+    for i, word in enumerate(words):
+        word_start = start + i * step
+        word_end = (
+            end
+            if i == len(words) - 1
+            else start + (i + 1) * step
+        )
+
+        result.append({
+            "word": " " + word,
+            "start": float(word_start),
+            "end": float(word_end),
+        })
+
+    return result
+
+
+def _transcript_from_cues(cues, language="eng"):
+    """Convert subtitle cues into the transcript structure OpenShorts expects."""
+    segments = []
+
+    for cue in cues:
+        segments.append({
+            "start": float(cue["start"]),
+            "end": float(cue["end"]),
+            "text": cue["text"],
+            "words": _words_for_cue(
+                cue["text"],
+                cue["start"],
+                cue["end"],
+            ),
+        })
+
+    return {
+        "text": " ".join(segment["text"] for segment in segments),
+        "language": language,
+        "segments": segments,
+    }
+
+
+def _gemini_model_name():
+    """Return the configured Gemini model."""
+    return (
+        os.environ.get("GEMINI_MODEL")
+        or "gemini-3.1-flash-lite"
+    )
+
+
+def _gemini_translate_segments(segments, source_language):
+    """Translate subtitle/transcript text to English with Gemini."""
+    import json
+    from google import genai
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY is required to translate subtitles to English."
+        )
+
+    client = genai.Client(api_key=api_key)
+
+    translated = []
+
+    batch_size = 40
+
+    for batch_start in range(0, len(segments), batch_size):
+        batch = segments[batch_start:batch_start + batch_size]
+
+        payload = [
+            {
+                "id": i,
+                "text": segment["text"],
+            }
+            for i, segment in enumerate(batch)
+        ]
+
+        prompt = f"""
+Translate the following subtitle/transcript segments into natural English.
+
+Source language: {source_language}
+
+Rules:
+- Return exactly one English translation for every input segment.
+- Preserve the IDs.
+- Do not merge or split segments.
+- Do not add explanations.
+- Keep names and terminology accurate.
+- Output JSON only.
+
+Input:
+{json.dumps(payload, ensure_ascii=False)}
+"""
+
+        response = client.models.generate_content(
+            model=_gemini_model_name(),
+            contents=prompt,
+        )
+
+        raw = getattr(response, "text", "") or ""
+
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            start = raw.find("[")
+            end = raw.rfind("]")
+
+            if start == -1 or end == -1:
+                raise RuntimeError(
+                    "Gemini returned an invalid translation response."
+                )
+
+            result = json.loads(raw[start:end + 1])
+
+        translations = {
+            int(item["id"]): item["text"]
+            for item in result
+        }
+
+        for i, segment in enumerate(batch):
+            translated_text = translations.get(i, segment["text"])
+
+            translated.append({
+                **segment,
+                "text": translated_text,
+            })
+
+    return _transcript_from_cues(
+        translated,
+        language="eng",
+    )
+
+
+def _transcribe_from_embedded_subtitles(media_path):
+    """
+    Prefer embedded English subtitles.
+
+    If English is unavailable, use another embedded subtitle track
+    and translate it to English with Gemini.
+    """
+    streams = _probe_subtitle_streams(media_path)
+
+    if not streams:
+        return None
+
+    print(f"📝 Found {len(streams)} embedded subtitle stream(s)")
+
+    english_stream = next(
+        (
+            stream for stream in streams
+            if _subtitle_language_is_english(
+                stream["language"],
+                stream["title"],
+            )
+        ),
+        None,
+    )
+
+    if english_stream:
+        print(
+            f"🇬🇧 Using embedded English subtitles "
+            f"(stream {english_stream['index']})"
+        )
+
+        srt_text = _extract_subtitle_stream(
+            media_path,
+            english_stream["index"],
+        )
+
+        cues = _parse_srt(srt_text)
+
+        if cues:
+            return _transcript_from_cues(
+                cues,
+                language="eng",
+            )
+
+        print("⚠️ Embedded English subtitle stream was empty/unreadable.")
+
+    source_stream = streams[0]
+
+    print(
+        f"🌐 Using embedded subtitles as translation source "
+        f"(stream {source_stream['index']}, "
+        f"language={source_stream['language'] or 'unknown'})"
+    )
+
+    srt_text = _extract_subtitle_stream(
+        media_path,
+        source_stream["index"],
+    )
+
+    cues = _parse_srt(srt_text)
+
+    if not cues:
+        return None
+
+    source_language = source_stream["language"] or "unknown"
+
+    return _gemini_translate_segments(
+        cues,
+        source_language,
+    )
+
+
+def _translate_whisper_transcript_to_english(transcript):
+    """Translate an actual-language ASR transcript into English."""
+    source_language = transcript.get("language") or "unknown"
+
+    if source_language.lower() in {
+        "en",
+        "eng",
+        "english",
+    }:
+        return transcript
+
+    print(
+        f"🌐 Translating transcript from "
+        f"{source_language} to English with Gemini..."
+    )
+
+    segments = [
+        {
+            "start": segment["start"],
+            "end": segment["end"],
+            "text": segment["text"],
+        }
+        for segment in transcript.get("segments", [])
+    ]
+
+    try:
+        translated = _gemini_translate_segments(
+            segments,
+            source_language,
+        )
+    except Exception as e:
+        raise TranslationUnavailableError(
+            f"Could not translate transcript from "
+            f"{source_language} to English: {e}"
+        ) from e
+
+    return translated
+
+
 def transcribe_media(media_path):
-    """Transcribe with the configured backend, falling back to whisper."""
-    # Silent videos (AI-generated clips, muted screen recordings) have no audio
-    # stream; every ASR backend then crashes deep inside libav with an opaque
-    # "tuple index out of range". Detect it up front and fail with a clear,
-    # actionable reason instead.
+    """
+    Always produce an English transcript/subtitle source.
+
+    Priority:
+      1. Embedded English subtitles.
+      2. Embedded non-English subtitles translated to English.
+      3. Actual-language ASR followed by Gemini translation to English.
+    """
+    # First check embedded subtitles. This must happen before the
+    # audio check so subtitle-only videos can still be processed.
+    try:
+        embedded = _transcribe_from_embedded_subtitles(media_path)
+
+        if embedded is not None and embedded.get("segments"):
+            print(
+                f"📝 Subtitle source ready: "
+                f"{len(embedded['segments'])} segments, language=eng"
+            )
+            return embedded
+
+    except Exception as e:
+        print(
+            f"⚠️ Embedded subtitle processing failed "
+            f"({type(e).__name__}: {e}) — falling back to ASR"
+        )
+
     if not _has_audio_stream(media_path):
         raise NoAudioError(
-            "This video has no audio track. OpenShorts finds viral moments from "
-            "speech, so it needs a video with audio.")
+            "This video has no audio track and no usable embedded subtitles."
+        )
 
-    backend = os.environ.get("TRANSCRIBE_BACKEND", "whisper").strip().lower()
+    backend = os.environ.get(
+        "TRANSCRIBE_BACKEND",
+        "whisper",
+    ).strip().lower()
 
     if backend == "parakeet":
         try:
             transcript = _transcribe_with_parakeet(media_path)
             reason = _parakeet_fallback_reason(transcript)
-            if reason is None:
-                print(f"🎙️ [ASR] parakeet ok: lang={transcript['language']} "
-                      f"segments={len(transcript['segments'])}")
-                return transcript
-            print(f"⚠️ [ASR] parakeet result rejected ({reason}) — "
-                  f"falling back to whisper")
-        except Exception as e:
-            print(f"⚠️ [ASR] parakeet failed ({type(e).__name__}: {e}) — "
-                  f"falling back to whisper")
 
-    return _transcribe_with_whisper(media_path)
+            if reason is None:
+                print(
+                    f"🎙️ [ASR] parakeet ok: "
+                    f"lang={transcript['language']} "
+                    f"segments={len(transcript['segments'])}"
+                )
+
+                return _translate_whisper_transcript_to_english(
+                    transcript
+                )
+
+            print(
+                f"⚠️ [ASR] parakeet result rejected ({reason}) — "
+                f"falling back to whisper"
+            )
+
+        except Exception as e:
+            print(
+                f"⚠️ [ASR] parakeet failed "
+                f"({type(e).__name__}: {e}) — "
+                f"falling back to whisper"
+            )
+
+    transcript = _transcribe_with_whisper(media_path)
+
+    return _translate_whisper_transcript_to_english(
+        transcript
+    )
+

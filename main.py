@@ -1990,7 +1990,10 @@ if __name__ == '__main__':
 
         # 3. Transcribe — unless the video has no audio, in which case fall back
         # to Gemini vision (picks clips from the imagery instead of the speech).
-        from transcribe_backends import NoAudioError
+        from transcribe_backends import (
+            NoAudioError,
+            TranslationUnavailableError,
+        )
         transcript = None
         # Module handover (issue #68): another module already transcribed this
         # exact source with the same backend, so reuse its output. Any problem
@@ -2015,8 +2018,15 @@ if __name__ == '__main__':
             try:
                 transcript = transcribe_video(input_video)
                 save_transcript_checkpoint(output_dir, transcript, input_video, duration)
+            except TranslationUnavailableError as e:
+                print(
+                    f"🌐 {e} — using original audio with no subtitles "
+                    f"and switching to visual analysis."
+                )
+                transcript = None
             except NoAudioError as e:
                 print(f"🔇 {e} — switching to visual analysis.")
+                transcript = None
 
         # Music-only or wordless footage transcribes to a handful of words.
         # Clip it by what is on screen instead, like a video with no audio.

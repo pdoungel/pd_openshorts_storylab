@@ -1,51 +1,76 @@
-# Video files
+# Secrets / environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Frontend builds / caches
+dist/
+build/
+.vite/
+.cache/
+
+# Generated OpenShorts media / projects
+output/
+uploads/
+tmp/
+temp/
 *.mp4
-*.webm
 *.mov
 *.mkv
+*.webm
+*.avi
+*.m4v
+*.wav
+*.mp3
+*.flac
 
-# YOLO model
-*.pt
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
 
-# Python virtual environment
-.venv/
-__pycache__/
-*.pyc
-
-# Temporary files / runtime dirs
-temp_*
-uploads/
-downloads/
-videos/
-output/
-
-# OS / IDE
+# OS / editor
 .DS_Store
-.idea/
+Thumbs.db
 .vscode/
+.idea/
 
-# Secrets
-.env
+# Logs
+*.log
 
-# Generated metadata
-*_metadata.json
+# Backups
+*.bak
+*.backup
+*.orig
 
-# Cache dirs
-.cache/
-.config/
-# Multi-agent Skills
-.agents/
-.agent/
-.claude/
-# skills/ holds third-party installs (symlinks); our own published skill is versioned
-skills/*
-!skills/openshorts/
-skills-lock.json
+# Local Ultralytics configuration/cache
+.config/Ultralytics/
 
+# Model binaries
+*.pt
+*.onnx
+*.safetensors
 
-# Cloud env example kept local only (avoid leaking infra hints)
-.env.cloud.example
-.worktrees
-
-# Instrucciones locales con datos de infra (repo público)
-CLAUDE.local.md
+# Local backup copies
+*.before-*
+*.backup-storage

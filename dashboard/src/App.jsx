@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock } from 'lucide-react';
+import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, FolderOpen } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import McpConnectCard from './components/McpConnectCard';
@@ -769,7 +769,7 @@ function App() {
   // A self-hosted server running the moment picker on a local LLM
   // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
   const geminiOk = !!apiKey || !!localLlm;
-  const keysMissing = !billingEnabled && (!geminiOk || !uploadPostKey);
+  const keysMissing = !billingEnabled && !geminiOk;
   const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
 
   // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
@@ -1072,7 +1072,8 @@ function App() {
     { id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
     { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History', short: 'history' }] : []),
-    { id: 'settings', ord: '07', icon: Settings, label: 'Settings', short: 'settings' },
+    { id: 'projects', ord: '07', icon: FolderOpen, label: 'Projects', short: 'projects' },
+    { id: 'settings', ord: '08', icon: Settings, label: 'Settings', short: 'settings' },
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
 
@@ -1791,6 +1792,15 @@ function App() {
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
                 <HistoryTab onReopenProject={restoreProject} />
+              </div>
+            </div>
+          )}
+
+          {/* View: Local Projects / Storage */}
+          {activeTab === 'projects' && (
+            <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
+              <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
+                <HistoryTab onReopenProject={restoreProject} local />
               </div>
             </div>
           )}
