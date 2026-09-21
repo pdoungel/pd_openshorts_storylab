@@ -42,6 +42,10 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   const [sourceMessage, setSourceMessage] = useState('');
   const [analysisMessage, setAnalysisMessage] = useState('');
   const [copiedMetadata, setCopiedMetadata] = useState('');
+  const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
+  const [voiceboxAvailable, setVoiceboxAvailable] = useState(false);
+  const [voiceboxLoading, setVoiceboxLoading] = useState(false);
+  const [voiceProfileId, setVoiceProfileId] = useState('');
 
   const replaceProject = (project) => { setSelected(project); setProjects(prev => prev.map(p => p.id === project.id ? project : p)); };
 
@@ -50,6 +54,9 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     catch (e) { setError(e.message || 'Could not load Story Lab projects.'); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (selected?.renders?.length) loadVoicebox();
+  }, [selected?.id, selected?.renders?.length]);
   useEffect(() => {
     if (selected?.analysis?.story) {
       setStoryDraft(selected.analysis.story);
@@ -99,6 +106,37 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/sources/text', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: transcript.includes('-->') ? 'pasted-source.srt' : 'pasted-source.txt', text: transcript}) })); setTranscript(''); }
     catch (e) { setError(e.message || 'Could not add source text.'); }
     finally { setLoading(false); }
+  };
+
+  const loadVoicebox = async () => {
+    setVoiceboxLoading(true);
+    try {
+      const status = await apiJson('/api/storylab/voicebox/status');
+      setVoiceboxAvailable(Boolean(status.available));
+      if (status.available) {
+        const data = await apiJson('/api/storylab/voicebox/profiles');
+        const profiles = data.profiles || [];
+        setVoiceboxProfiles(profiles);
+        setVoiceProfileId(prev => prev || profiles[0]?.id || '');
+      }
+    } catch (e) {
+      setVoiceboxAvailable(false);
+      setVoiceboxProfiles([]);
+    } finally {
+      setVoiceboxLoading(false);
+    }
+  };
+
+  const generateVoiceover = async () => {
+    if (!selected || !voiceProfileId) return;
+    setLoading(true); setBusyLabel('Generating narration…'); setError('');
+    try {
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/voiceover', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({profile_id: voiceProfileId})
+      }));
+    } catch (e) { setError(e.message || 'Voiceover generation failed.'); }
+    finally { setLoading(false); setBusyLabel(''); }
   };
 
   const evidenceStatus = (evidenceId) => selected?.reviews?.find(r => r.target_type === 'evidence' && r.target_id === evidenceId)?.status || 'pending';
@@ -452,6 +490,32 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <button className="btn-primary" disabled={loading || selected.status !== 'approved'} onClick={render}><Clapperboard size={14}/> create final video</button>
   </div>
 </div>
+</div>}{selected.renders?.length>0 && <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
+  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div>
+      <span className="readout">NARRATION & VOICEOVER</span>
+      <p className="text-xs text-muted mt-1">The narration is generated from the approved Story Lab script, so it follows the same question, theory/why angle, evidence and conclusion used by the video.</p>
+    </div>
+    <div className="flex flex-wrap gap-2">
+      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download><FileText size={13}/> narration script</a>
+      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download><FileText size={13}/> timing SRT</a>
+    </div>
+  </div>
+  <div className="rounded border border-rule p-3">
+    <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+      <div className="flex-1">
+        <label className="eyebrow block mb-1.5">LOCAL VOICEBOX VOICE</label>
+        {voiceboxProfiles.length ? <select className="input-field w-full" value={voiceProfileId} onChange={e=>setVoiceProfileId(e.target.value)}>{voiceboxProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.language || 'en'}</option>)}</select> : <div className="text-xs text-muted border border-dashed border-rule rounded p-3">{voiceboxLoading ? 'Checking Voicebox…' : voiceboxAvailable ? 'No Voicebox profiles found. Create a voice profile in Voicebox first.' : 'Voicebox is not connected.'}</div>}
+      </div>
+      <div className="flex gap-2">
+        <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>refresh</button>
+        <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>generate voiceover + final video</button>
+      </div>
+    </div>
+    {selected.voiceover?.status === 'generated' && <p className="text-[11px] text-emerald-700 mt-2">Voiceover generated with Voicebox and mixed into the latest final video.</p>}
+    {selected.voiceover?.status === 'error' && <p className="text-[11px] text-warn mt-2">Voiceover failed: {selected.voiceover.error}</p>}
+    <p className="text-[10px] text-muted mt-2">No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.</p>
+  </div>
 </div>}{selected.renders?.length>0 && <div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <div className="rounded border border-rule p-3 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
     <div><span className="readout">YOUTUBE UPLOAD PACKAGE</span><p className="text-[11px] text-muted mt-1">Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.</p></div>
