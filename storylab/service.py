@@ -86,7 +86,7 @@ class StoryLabStore:
         try:
             project.analysis = analyze_story(
                 project.title, transcript, duration, project.sources,
-                angle=project.brief.angle, kind=project.kind
+                angle=project.brief.angle, kind=project.kind, question=project.brief.question
             )
             project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
             # A freeform transcript can produce an outline, but it enters formal
