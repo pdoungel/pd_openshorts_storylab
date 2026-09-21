@@ -5,11 +5,19 @@ from pydantic import BaseModel, Field
 
 
 class StoryBrief(BaseModel):
-    angle: Literal["story","why","theory","character","theme","lore","worldbuilding","ending","adaptation","review","documentary"] = "story"
+    """Editorial lens shared by every Story Lab project."""
+    angle: Literal["story", "why", "theory", "character", "theme", "lore", "worldbuilding", "ending", "adaptation", "review", "documentary"] = "story"
     question: str = Field(default="", max_length=2000)
+    audience: str = Field(default="", max_length=500)
+    tone: str = Field(default="clear", max_length=120)
+    spoiler_policy: Literal["none", "light", "full"] = "light"
+    output_format: str = Field(default="long_form", max_length=80)
+    target_duration_seconds: Optional[float] = Field(default=None, gt=0)
 
 
 class StoryProjectCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    kind: Literal["movie", "series", "anime", "episode", "documentary", "other"] = "movie"
     brief: StoryBrief = Field(default_factory=StoryBrief)
     title: str = Field(min_length=1, max_length=240)
     kind: Literal["movie", "series", "anime", "episode", "documentary", "other"] = "movie"
@@ -72,6 +80,10 @@ class StoryBuilder(BaseModel):
     conflict: str = ""
     consequences: str = ""
     significance: str = ""
+    central_question: str = ""
+    interpretation: str = ""
+    counterpoints: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
     # Provenance for each generated story component. These IDs refer only to
     # evidence already present in StoryAnalysis.evidence.
     hook_evidence_ids: list[str] = Field(default_factory=list)
@@ -82,6 +94,10 @@ class StoryBuilder(BaseModel):
     conflict_evidence_ids: list[str] = Field(default_factory=list)
     consequences_evidence_ids: list[str] = Field(default_factory=list)
     significance_evidence_ids: list[str] = Field(default_factory=list)
+    central_question_evidence_ids: list[str] = Field(default_factory=list)
+    interpretation_evidence_ids: list[str] = Field(default_factory=list)
+    counterpoint_evidence_ids: list[list[str]] = Field(default_factory=list)
+    open_question_evidence_ids: list[list[str]] = Field(default_factory=list)
 
 
 class VisualResearchItem(BaseModel):
@@ -157,7 +173,8 @@ class StoryAnalysis(BaseModel):
 class StoryProject(BaseModel):
     id: str
     title: str
-    kind: str
+    kind: Literal["movie", "series", "anime", "episode", "documentary", "other"]
+    brief: StoryBrief = Field(default_factory=StoryBrief)
     source_path: Optional[str] = None
     notes: str = ""
     status: Literal["draft", "ingested", "analyzing", "analyzed", "review", "approved", "rendered", "error"] = "draft"
