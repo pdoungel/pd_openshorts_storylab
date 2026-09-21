@@ -489,8 +489,9 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <p className="text-[11px] text-muted">Render uses the approved script order and only selected, section-linked source scenes. Nothing is published automatically.</p>
     <button className="btn-primary" disabled={loading || selected.status !== 'approved'} onClick={render}><Clapperboard size={14}/> create final video</button>
   </div>
-</div>
-{selected.renders?.length>0 && <>\n<div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
+</div>}
+{selected.renders?.length>0 && <>
+<div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
       <span className="readout">NARRATION & VOICEOVER</span>
