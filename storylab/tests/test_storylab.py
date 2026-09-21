@@ -148,3 +148,29 @@ def test_updating_story_brief_resets_analysis(tmp_path):
     assert project.analysis is None
     assert project.script == []
     assert project.brief.angle == "why"
+
+
+def test_timed_scene_is_linked_back_to_matching_script_section(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\\n00:00:10,000 --> 00:00:12,500\\nA key reveal happens.\\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project = store.analyze(project.id)
+    scene = project.scenes[0]
+    linked_sections = [section for section in project.script if scene.id in section.scene_ids]
+    assert linked_sections
+    assert scene.evidence_ids[0] in linked_sections[0].evidence_ids
+
+
+def test_link_scenes_to_script_is_idempotent(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\\n00:00:10,000 --> 00:00:12,500\\nA key reveal happens.\\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project = store.analyze(project.id)
+    before = [list(section.scene_ids) for section in project.script]
+    project = store.link_scenes_to_script(project.id)
+    after = [list(section.scene_ids) for section in project.script]
+    assert after == before
