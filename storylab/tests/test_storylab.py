@@ -309,3 +309,29 @@ def test_pretrained_embedding_provider_can_be_used_with_a_fake_model(monkeypatch
     )
     assert ranked[0][0] == 0
     assert ranked[0][4] == "sentence-transformers"
+
+
+def test_analysis_exposes_reviewable_insights(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Insight film", kind="movie"))
+    project = store.ingest_text(project.id, "A witness describes the turning point.")
+    project = store.analyze(project.id)
+    assert project.analysis.insights
+    insight = project.analysis.insights[0]
+    assert insight.evidence_ids
+    assert insight.status in {"supported", "unreviewed"}
+    project = store.review(project.id, "insight", insight.id, "approved")
+    assert project.analysis.insights[0].status == "approved"
+
+
+def test_unknown_insight_review_is_rejected(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Insight film", kind="movie"))
+    project = store.ingest_text(project.id, "A source passage.")
+    project = store.analyze(project.id)
+    try:
+        store.review(project.id, "insight", "missing", "approved")
+    except ValueError as exc:
+        assert "Unknown insight" in str(exc)
+    else:
+        raise AssertionError("unknown insight should be rejected")
