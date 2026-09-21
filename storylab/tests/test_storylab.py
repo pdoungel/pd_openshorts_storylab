@@ -407,3 +407,50 @@ def test_editable_story_builder_rejects_unknown_provenance(tmp_path):
         assert "Unknown insight" in str(exc)
     else:
         raise AssertionError("unknown insight should be rejected")
+
+
+def test_selected_scene_is_extracted_immediately(tmp_path, monkeypatch):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:10,000 --> 00:00:12,000\nA selected moment.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind":"video"})
+    project = store.save(project)
+    project = store.analyze(project.id)
+    project = store.search_scenes(project.id, query="selected moment", context_seconds=0)
+    scene_id = project.scenes[0].id
+
+    def fake_extract(source_path, output_path, start, end):
+        from pathlib import Path
+        Path(output_path).write_bytes(b"fake mp4")
+        return output_path
+
+    monkeypatch.setattr("storylab.service.extract_scene", fake_extract)
+    project = store.select_scenes(project.id, [scene_id])
+    assert project.scenes[0].selected is True
+    assert project.scenes[0].extraction_status == "extracted"
+    assert project.scenes[0].output_file
+
+    project = store.select_scenes(project.id, [])
+    assert project.scenes[0].selected is False
+
+
+def test_youtube_package_is_ready_with_chapters_and_metadata(tmp_path):
+    from storylab.youtube import build_youtube_package
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(
+        title="A Long Story",
+        kind="documentary",
+        brief={"angle":"documentary", "question":"What changed?", "spoiler_policy":"full"},
+    ))
+    project = store.ingest_text(project.id, "The archive records a major turning point.")
+    project = store.analyze(project.id)
+    package = build_youtube_package(project)
+    assert package.title == "A Long Story"
+    assert package.description
+    assert package.description.find("CHAPTERS") >= 0
+    assert package.chapters
+    assert package.chapters[0].startswith("00:00")
+    assert package.privacy_status == "private"
+    assert package.category_id == "22"
