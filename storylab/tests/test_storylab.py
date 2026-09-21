@@ -71,3 +71,28 @@ def test_script_sections_preserve_story_evidence_links(tmp_path):
     event_sections=[section for section in project.script if section.heading.startswith("Key event")]
     if event_sections and project.analysis.story.key_event_evidence_ids:
         assert event_sections[0].evidence_ids==project.analysis.story.key_event_evidence_ids[0]
+
+
+def test_story_brief_drives_why_angle_for_anime(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(
+        title="Why did they do it?",
+        kind="anime",
+        brief={"angle": "why", "question": "Why did the character make that choice?", "spoiler_policy": "full"},
+    ))
+    project = store.ingest_text(project.id, "The character chooses the plan after the warning.")
+    project = store.analyze(project.id)
+    headings = [section.heading for section in project.script]
+    assert project.brief.angle == "why"
+    assert "The question" in headings
+    assert "The explanation" in headings
+
+
+def test_story_brief_drives_theory_angle_for_series(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Mystery", kind="series", brief={"angle": "theory"}))
+    project = store.ingest_text(project.id, "The symbol appears before the reveal.")
+    project = store.analyze(project.id)
+    headings = [section.heading for section in project.script]
+    assert "What is canon" in headings
+    assert "The theory" in headings
