@@ -39,6 +39,16 @@ def test_json_transcript_invalid_timestamps_are_ignored(tmp_path):
     assert result.sources[0].segments[0].start==1.0
 
 
+def test_vtt_short_timestamps_are_ingested(tmp_path):
+    store=StoryLabStore(str(tmp_path)); project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
+    source=tmp_path/"record.vtt"
+    source.write_text("WEBVTT\n\n00:01.000 --> 00:03.500\nA short-form timed cue.\n",encoding="utf-8")
+    result=store.ingest(project.id,str(source))
+    segment=result.sources[0].segments[0]
+    assert segment.start==1.0
+    assert segment.end==3.5
+
+
 def test_visual_research_is_seeded_and_reviewable(tmp_path):
     store=StoryLabStore(str(tmp_path)); project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
     project=store.ingest_text(project.id,"A documented event happened in the archive.")
