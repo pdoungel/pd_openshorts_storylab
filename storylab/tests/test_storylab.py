@@ -370,3 +370,39 @@ def test_insights_drive_story_and_script():
     assert "What forces the departure?" in question.narration
     assert "in_question" in question.insight_ids
     assert "ev_event" in question.evidence_ids
+
+
+def test_editable_story_builder_relinks_scenes(tmp_path):
+    from storylab.models import StoryBuilder
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Editable story", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:10,000 --> 00:00:12,000\nThe warning changes the plan.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind":"video"})
+    project = store.save(project)
+    project = store.analyze(project.id)
+    assert project.scenes
+    story = project.analysis.story.model_copy(update={
+        "hook": "Edited hook",
+        "component_insight_ids": {"hook": project.analysis.story.component_insight_ids.get("hook", [])},
+    })
+    project = store.update_story(project.id, story)
+    assert project.analysis.story.hook == "Edited hook"
+    assert project.analysis.story.component_scene_ids["hook"]
+    assert any(project.scenes[0].id in section.scene_ids for section in project.script)
+
+
+def test_editable_story_builder_rejects_unknown_provenance(tmp_path):
+    from storylab.models import StoryBuilder
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Editable story", kind="movie"))
+    project = store.ingest_text(project.id, "A source passage.")
+    project = store.analyze(project.id)
+    story = project.analysis.story.model_copy(update={"component_insight_ids": {"hook": ["missing"]}})
+    try:
+        store.update_story(project.id, story)
+    except ValueError as exc:
+        assert "Unknown insight" in str(exc)
+    else:
+        raise AssertionError("unknown insight should be rejected")
