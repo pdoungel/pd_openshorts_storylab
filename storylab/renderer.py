@@ -1,14 +1,26 @@
 from __future__ import annotations
+
 import json
-import os, subprocess
+import os
+import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
 from .models import StoryProject
+
+
 def extract_scene(source_path: str, output_path: str, start: float, end: float) -> str:
-    if not os.path.isfile(source_path): raise FileNotFoundError(source_path)
-    if end <= start: raise ValueError("Scene end must be greater than start")
+    if not os.path.isfile(source_path):
+        raise FileNotFoundError(source_path)
+    if end <= start:
+        raise ValueError("Scene end must be greater than start")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["ffmpeg","-y","-ss",f"{start:.3f}","-i",source_path,"-t",f"{end-start:.3f}","-c","copy",output_path],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=1800)
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", source_path,
+         "-t", f"{end-start:.3f}", "-c", "copy", output_path],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
     return output_path
 
 
@@ -18,32 +30,96 @@ class RenderResult:
     manifest_path: str
 
 
-def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderResult:
-    """Render approved, source-backed visual ranges through the existing ffmpeg primitive.
+def _wrap_text(text: str, width: int = 68) -> str:
+    words = " ".join((text or "").split()).split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        if not word:
+            continue
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return "\n".join(lines[:8])
 
-    Contextual/generated items are deliberately represented in the manifest only:
-    they require an editor-provided asset and must never be silently fabricated
-    into an allegedly source-backed documentary.
+
+def _clean_overlay_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", "", text or "")
+    return " ".join(text.split()).strip()
+
+
+def _render_text_clip(input_path: Path, output_path: Path, text_file: Path) -> None:
+    """Normalize a source clip and burn the approved story text over it."""
+    filter_text = (
+        "scale=1920:1080:force_original_aspect_ratio=decrease,"
+        "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
+        f"drawtext=font='DejaVu Sans':textfile='{text_file.as_posix()}':"
+        "fontcolor=white:fontsize=38:line_spacing=10:"
+        "box=1:boxcolor=black@0.62:boxborderw=18:"
+        "x=(w-text_w)/2:y=h-text_h-70"
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(input_path), "-vf", filter_text,
+         "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+         "-ar", "48000", "-movflags", "+faststart", str(output_path)],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
+
+
+def _normalize_clip(input_path: Path, output_path: Path) -> None:
+    filter_text = (
+        "scale=1920:1080:force_original_aspect_ratio=decrease,"
+        "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(input_path), "-vf", filter_text,
+         "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+         "-ar", "48000", "-movflags", "+faststart", str(output_path)],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
+
+
+def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderResult:
+    """Render a review-approved Story Lab video with source visuals and story text.
+
+    The result is a downloadable, long-form MP4. Source clips are kept grounded in
+    the evidence/scene graph; generated text is burned into the first visual clip
+    for each script section. No social publishing happens here.
     """
-    output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = output_dir / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
     sources = {source.id: source for source in project.sources}
-    clips, manifest_sections = [], []
+    clips = []
+    manifest_sections = []
     seen_clip_paths = set()
-    for section in project.script:
-        row = {"id": section.id, "heading": section.heading, "narration": section.narration,
-               "duration_seconds": section.duration_seconds, "scene_ids": list(section.scene_ids),
-               "visuals": [visual.model_dump() for visual in section.visual_suggestions],
-               "visual_research": [item.model_dump() for item in section.visual_research]}
-        # Preserve editorial order: script section order first, then the exact
-        # scene_ids order chosen by the story/script graph. Only selected scenes
-        # participate in the final assembly.
+
+    for section_index, section in enumerate(project.script):
+        row = {
+            "id": section.id,
+            "heading": section.heading,
+            "narration": section.narration,
+            "duration_seconds": section.duration_seconds,
+            "scene_ids": list(section.scene_ids),
+            "visuals": [visual.model_dump() for visual in section.visual_suggestions],
+            "visual_research": [item.model_dump() for item in section.visual_research],
+        }
         linked_scenes = [
             scene for scene_id in section.scene_ids
             for scene in project.scenes
             if scene.id == scene_id and scene.selected
         ]
-        linked_clip_count = 0
-        for scene in linked_scenes:
+        section_clips = []
+        for scene_index, scene in enumerate(linked_scenes):
             clip = None
             if scene.output_file and os.path.isfile(scene.output_file):
                 clip = Path(scene.output_file)
@@ -52,41 +128,59 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
                 extract_scene(scene.source_file, str(clip), scene.start, scene.end)
             if clip is None:
                 continue
+
+            normalized = work_dir / f"{section_index:03d}_{scene_index:03d}_{scene.id}.mp4"
+            if scene_index == 0:
+                text_file = work_dir / f"{section_index:03d}_{section.id}.txt"
+                overlay = _wrap_text(
+                    _clean_overlay_text(section.heading) + "\n\n" +
+                    _clean_overlay_text(section.narration),
+                    68,
+                )
+                text_file.write_text(overlay, encoding="utf-8")
+                _render_text_clip(clip, normalized, text_file)
+            else:
+                _normalize_clip(clip, normalized)
+
+            section_clips.append(normalized)
             if str(clip) not in seen_clip_paths:
-                clips.append(clip)
+                clips.append(normalized)
                 seen_clip_paths.add(str(clip))
             row.setdefault("source_clips", []).append(str(clip))
             row.setdefault("scene_clips", []).append({"scene_id": scene.id, "path": str(clip)})
-            linked_clip_count += 1
-        if linked_clip_count == 0:
-            for visual in section.visual_suggestions:
-                if visual.material_type != "source_backed":
-                    continue
-                for evidence_id in visual.evidence_ids:
-                    evidence = next((item for item in project.analysis.evidence if item.id == evidence_id), None) if project.analysis else None
-                    source = sources.get(evidence.source_id) if evidence else None
-                    if not evidence or not source or source.kind != "video" or not source.path or evidence.start is None or evidence.end is None:
-                        continue
-                    clip = output_dir / f"{section.id}_{evidence.id}.mp4"
-                    extract_scene(source.path, str(clip), evidence.start, evidence.end)
-                    if str(clip) not in seen_clip_paths:
-                        clips.append(clip)
-                        seen_clip_paths.add(str(clip))
-                    row.setdefault("source_clips", []).append(str(clip))
-                    row.setdefault("scene_clips", []).append({"scene_id": next((s.id for s in project.scenes if s.evidence_ids == [evidence.id]), None), "path": str(clip)})
-        manifest_sections.append(row)
+        if section_clips:
+            manifest_sections.append(row)
+
     manifest = output_dir / "render-manifest.json"
-    manifest.write_text(json.dumps({
-        "project_id": project.id,
-        "sections": manifest_sections,
-        "clips": [str(clip) for clip in clips],
-        "assembly_order": [str(clip) for clip in clips],
-        "selected_scene_ids": [scene.id for section in project.script for scene in project.scenes if scene.id in section.scene_ids and scene.selected],
-    }, indent=2), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({
+            "project_id": project.id,
+            "sections": manifest_sections,
+            "clips": [str(clip) for clip in clips],
+            "assembly_order": [str(clip) for clip in clips],
+            "selected_scene_ids": [
+                scene.id
+                for section in project.script
+                for scene in project.scenes
+                if scene.id in section.scene_ids and scene.selected
+            ],
+            "output_type": "storylab_text_and_visual_video",
+        }, indent=2),
+        encoding="utf-8",
+    )
+
     if not clips:
         return RenderResult(None, str(manifest))
-    output = output_dir / "documentary-source-assembly.mp4"
-    concat = output_dir / "concat.txt"
-    concat.write_text("".join(f"file '{clip.as_posix()}'\n" for clip in clips), encoding="utf-8")
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(output)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800)
+
+    concat = work_dir / "concat.txt"
+    concat.write_text(
+        "".join(f"file '{clip.as_posix()}'\n" for clip in clips),
+        encoding="utf-8",
+    )
+    output = output_dir / "storylab-final.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+         "-c", "copy", "-movflags", "+faststart", str(output)],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
     return RenderResult(str(output), str(manifest))
