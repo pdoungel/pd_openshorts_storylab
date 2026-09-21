@@ -198,6 +198,25 @@ export default function StoryLabTab() {
   {selected.analysis.story?.key_events?.length > 0 && <div className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">Key Events</div><div className="mt-2 space-y-2">{selected.analysis.story.key_events.map((item,index) => <div key={index} className="text-sm text-ink2"><span className="text-muted mr-2">{index+1}.</span>{item}</div>)}</div></div>}
   {selected.analysis.story?.people?.length > 0 && <div className="rounded-input border border-rule p-3"><div className="text-xs uppercase tracking-wide text-brass">People / Actors</div><div className="mt-2 space-y-2">{selected.analysis.story.people.map((item,index) => <div key={index} className="text-sm text-ink2"><span className="text-muted mr-2">{index+1}.</span>{item}</div>)}</div></div>}
 </div>}
+{selected.analysis?.insights?.length>0 && <div className="space-y-3">
+  <div className="flex items-center justify-between"><span className="readout">STORY INTELLIGENCE</span><span className="text-[11px] text-muted">{selected.analysis.insights.length} reviewable insight(s)</span></div>
+  <div className="grid md:grid-cols-2 gap-3">
+    {selected.analysis.insights.map(insight => {
+      const reviewStatus = evidenceStatus(insight.id);
+      const status = insight.status || reviewStatus;
+      return <div key={insight.id} className="rounded-input border border-rule p-3">
+        <div className="flex items-center justify-between gap-2"><div className="text-xs uppercase tracking-wide text-brass">{insight.type}</div><span className="text-[10px] uppercase text-muted">{status}</span></div>
+        <div className="text-sm text-ink mt-1">{insight.title}</div>
+        <p className="text-sm text-ink2 mt-1 leading-relaxed">{insight.text}</p>
+        <div className="flex flex-wrap gap-1 mt-2">{evidenceById(insight.evidence_ids || []).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'} · {e.id.slice(-6)}</span>)}</div>
+        <div className="flex items-center gap-2 mt-3">
+          {status !== 'approved' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(insight,'approved')}>approve insight</button>}
+          {status !== 'challenged' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(insight,'changes_requested')}>challenge insight</button>}
+        </div>
+      </div>;
+    })}
+  </div>
+</div>}
 {selected.analysis && <div className="space-y-3">
   <div className="space-y-2">
     <div className="flex items-center justify-between"><span className="readout">SCENE RESEARCH</span><div className="flex gap-2"><button className="btn-ghost" disabled={loading} onClick={()=>searchScenes(sceneQuery || selected.brief?.question || selected.analysis?.story?.central_question || '')}>search</button>{selected.scenes?.some(s=>s.extraction_status==='candidate') && <button className="btn-primary" disabled={loading} onClick={extractScenes}>extract {selected.scenes.filter(s=>s.extraction_status==='candidate').length} scene(s)</button>}</div></div>
