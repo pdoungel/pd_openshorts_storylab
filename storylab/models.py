@@ -66,6 +66,16 @@ class StoryBuilder(BaseModel):
     conflict: str = ""
     consequences: str = ""
     significance: str = ""
+    # Provenance for each generated story component. These IDs refer only to
+    # evidence already present in StoryAnalysis.evidence.
+    hook_evidence_ids: list[str] = Field(default_factory=list)
+    context_evidence_ids: list[str] = Field(default_factory=list)
+    timeline_evidence_ids: list[list[str]] = Field(default_factory=list)
+    key_event_evidence_ids: list[list[str]] = Field(default_factory=list)
+    people_evidence_ids: list[list[str]] = Field(default_factory=list)
+    conflict_evidence_ids: list[str] = Field(default_factory=list)
+    consequences_evidence_ids: list[str] = Field(default_factory=list)
+    significance_evidence_ids: list[str] = Field(default_factory=list)
 
 
 class VisualResearchItem(BaseModel):
