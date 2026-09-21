@@ -51,7 +51,7 @@ class StoryLabStore:
     def create(self, payload: StoryProjectCreate) -> StoryProject:
         now = datetime.now(timezone.utc).isoformat()
         project = StoryProject(id=str(uuid.uuid4()), title=payload.title.strip(), kind=payload.kind,
-                               source_path=payload.source_path, notes=payload.notes, created_at=now, updated_at=now)
+                               source_path=payload.source_path, notes=payload.notes, brief=payload.brief, created_at=now, updated_at=now)
         return self.save(project)
 
     def ingest(self, project_id: str, source_path: str, source_name: str | None = None, transcribe: bool = False) -> StoryProject:
