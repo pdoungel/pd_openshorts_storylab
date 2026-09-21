@@ -138,6 +138,7 @@ Return JSON matching the schema. Every story component must cite supplied excerp
         interpretations = [i for i in insights if i.type in {"interpretation", "theory", "theme", "lore", "character"}]
         counterpoints = [i for i in insights if i.type == "counterpoint"]
         questions = [i for i in insights if i.type == "question"]
+        grouped_valid = lambda groups: [valid(group) for group in groups]
         story = StoryBuilder(
             hook=parsed.hook or (facts[0].text if facts else ""),
             context=parsed.context or " ".join(i.text for i in facts[:3]),
@@ -164,26 +165,7 @@ Return JSON matching the schema. Every story component must cite supplied excerp
             counterpoint_evidence_ids=grouped_valid(parsed.counterpoint_evidence_indexes) or [i.evidence_ids for i in counterpoints[:5]],
             open_question_evidence_ids=grouped_valid(parsed.open_question_evidence_indexes) or [i.evidence_ids for i in questions[:5]],
         )
-        grouped_valid = lambda groups: [valid(group) for group in groups]
         return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, insights=insights, theories=theories,
                              story=story)
-                                 hook=parsed.hook, context=parsed.context, timeline=parsed.timeline,
-                                 key_events=parsed.key_events, people=parsed.people, conflict=parsed.conflict,
-                                 consequences=parsed.consequences, significance=parsed.significance,
-                                 central_question=parsed.central_question, interpretation=parsed.interpretation,
-                                 counterpoints=parsed.counterpoints, open_questions=parsed.open_questions,
-                                 hook_evidence_ids=valid(parsed.hook_evidence_indexes),
-                                 context_evidence_ids=valid(parsed.context_evidence_indexes),
-                                 timeline_evidence_ids=grouped_valid(parsed.timeline_evidence_indexes),
-                                 key_event_evidence_ids=grouped_valid(parsed.key_event_evidence_indexes),
-                                 people_evidence_ids=grouped_valid(parsed.people_evidence_indexes),
-                                 conflict_evidence_ids=valid(parsed.conflict_evidence_indexes),
-                                 consequences_evidence_ids=valid(parsed.consequences_evidence_indexes),
-                                 significance_evidence_ids=valid(parsed.significance_evidence_indexes),
-                                 central_question_evidence_ids=valid(parsed.central_question_evidence_indexes),
-                                 interpretation_evidence_ids=valid(parsed.interpretation_evidence_indexes),
-                                 counterpoint_evidence_ids=grouped_valid(parsed.counterpoint_evidence_indexes),
-                                 open_question_evidence_ids=grouped_valid(parsed.open_question_evidence_indexes),
-                             ))
     except Exception:
         return _fallback_analysis(title, material, evidence)
