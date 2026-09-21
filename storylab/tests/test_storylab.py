@@ -454,3 +454,30 @@ def test_youtube_package_is_ready_with_chapters_and_metadata(tmp_path):
     assert package.chapters[0].startswith("00:00")
     assert package.privacy_status == "private"
     assert package.category_id == "22"
+
+
+def test_delete_project_removes_record_and_project_artifacts(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Delete me", kind="movie"))
+    source_dir = store._source_dir(project.id)
+    source_file = source_dir / "source.mp4"
+    source_file.write_bytes(b"source")
+    scenes_dir = store.root / "scenes" / project.id
+    scenes_dir.mkdir(parents=True)
+    (scenes_dir / "scene.mp4").write_bytes(b"scene")
+    renders_dir = store.root / "renders" / project.id
+    renders_dir.mkdir(parents=True)
+    (renders_dir / "render.mp4").write_bytes(b"render")
+
+    store.delete(project.id)
+
+    assert not store._path(project.id).exists()
+    assert not source_dir.exists()
+    assert not scenes_dir.exists()
+    assert not renders_dir.exists()
+    try:
+        store.get(project.id)
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("deleted project should not be readable")
