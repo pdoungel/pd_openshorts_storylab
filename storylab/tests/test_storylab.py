@@ -1,6 +1,7 @@
 from storylab.models import StoryProjectCreate,Evidence
 from storylab.evidence import normalize_evidence,extract_source_evidence
 from storylab.service import StoryLabStore
+from storylab.ingestion import _clean_subtitle_text, _is_lyric_like
 def test_evidence_is_clamped_to_duration():
     item=Evidence(id="e1",start=-2,end=99,label="x",claim="y"); normalized=normalize_evidence([item],duration=10); assert normalized[0].start==0; assert normalized[0].end==10
 def test_store_create_and_reload(tmp_path):
@@ -481,3 +482,21 @@ def test_delete_project_removes_record_and_project_artifacts(tmp_path):
         pass
     else:
         raise AssertionError("deleted project should not be readable")
+
+
+def test_subtitle_markup_is_removed_before_story_analysis():
+    cleaned = _clean_subtitle_text('<font size="54">It has been ten years.</font>')
+    assert cleaned == "It has been ten years."
+    assert "<font" not in cleaned
+
+
+def test_karaoke_like_subtitle_cues_are_ignored():
+    lyric = "A e i o u ♪ la la la la la la la la"
+    assert _is_lyric_like(lyric)
+
+
+def test_source_records_ingestion_method(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Record", kind="movie"))
+    result = store.ingest_text(project.id, "A normal source passage.")
+    assert result.sources[0].ingestion_source == "uploaded_text"
