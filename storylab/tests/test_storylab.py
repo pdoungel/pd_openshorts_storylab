@@ -28,3 +28,12 @@ def test_timed_transcript_is_source_traceable_and_requires_approval(tmp_path):
     else: assert False, "render must not bypass review"
     for section in project.script: project=store.review(project.id,"script",section.id,"approved")
     assert project.status=="approved"
+
+
+def test_json_transcript_invalid_timestamps_are_ignored(tmp_path):
+    store=StoryLabStore(str(tmp_path)); project=store.create(StoryProjectCreate(title="Record",kind="documentary"))
+    source=tmp_path/"bad.json"
+    source.write_text('{"segments":[{"text":"valid","start":1,"end":2},{"text":"bad","start":"oops","end":3}]}',encoding="utf-8")
+    result=store.ingest(project.id,str(source))
+    assert len(result.sources[0].segments)==1
+    assert result.sources[0].segments[0].start==1.0
