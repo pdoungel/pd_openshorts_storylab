@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from .models import StoryProjectCreate
+from .models import StoryProjectCreate, StoryBrief
 from .service import store
 
 router = APIRouter(prefix="/api/storylab", tags=["storylab"])
@@ -52,6 +52,19 @@ async def create_project(payload: StoryProjectCreate):
 async def get_project(project_id: str):
     return _project_or_404(lambda: store.get(project_id))
 
+
+
+
+@router.post("/projects/{project_id}/brief")
+async def update_brief(project_id: str, payload: StoryBrief):
+    def action():
+        project = store.get(project_id)
+        project.brief = payload
+        project.analysis = None
+        project.script = []
+        project.status = "ingested" if project.sources else "draft"
+        return store.save(project)
+    return _project_or_404(action)
 
 @router.post("/projects/{project_id}/sources/text")
 async def add_text_source(project_id: str, payload: TextSourceRequest):
