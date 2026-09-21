@@ -127,6 +127,51 @@ def _plain_segments(text: str, source_id: str, page: int | None = None) -> list[
             for part in re.split(r"\n\s*\n", text) if part.strip()]
 
 
+def _embedded_english_subtitles(path: Path, source_id: str) -> tuple[str, list[TranscriptSegment]] | None:
+    """Extract an embedded English subtitle stream when media provides one."""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "s",
+             "-show_entries", "stream=index:stream_tags=language,title",
+             "-of", "json", str(path)],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        streams = json.loads(probe.stdout).get("streams", [])
+    except (FileNotFoundError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+        return None
+    candidates = []
+    for stream in streams:
+        tags = stream.get("tags") or {}
+        language = str(tags.get("language") or "").strip().lower()
+        title = str(tags.get("title") or "").strip().lower()
+        score = 0
+        if language in {"eng", "en", "english"}:
+            score += 10
+        if "english" in title or re.search(r"\beng\b", title):
+            score += 5
+        if score:
+            candidates.append((score, int(stream.get("index", -1))))
+    candidates.sort(reverse=True)
+    for _, stream_index in candidates:
+        if stream_index < 0:
+            continue
+        try:
+            extracted = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(path),
+                 "-map", f"0:{stream_index}", "-c:s", "srt", "-f", "srt", "pipe:1"],
+                check=True, capture_output=True, text=True, timeout=120,
+            )
+            subtitle_text = extracted.stdout.strip()
+            if not subtitle_text:
+                continue
+            segments = _timed_segments(subtitle_text, source_id)
+            if segments:
+                return subtitle_text, segments
+        except (FileNotFoundError, subprocess.SubprocessError):
+            continue
+    return None
+
+
 def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe: bool = False) -> SourceLocator:
     """Read a local, Story Lab-owned source; no external URLs or Shorts state."""
     path = Path(path)
@@ -151,7 +196,10 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
         segments = [segment for number, page in pages for segment in _plain_segments(page, source_id, number)]
     else:
         duration = _ffprobe_duration(path)
-        if transcribe:
+        embedded = _embedded_english_subtitles(path, source_id)
+        if embedded:
+            text, segments = embedded
+        elif transcribe:
             import transcribe_backends
             transcript = transcribe_backends.transcribe_media_local(str(path))
             text = transcript.get("text", "")
