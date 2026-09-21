@@ -124,6 +124,15 @@ def rank_texts(
     provider: str | None = None,
 ) -> list[tuple[int, float, float, float, str]]:
     """Return (index, score, embedding_score, lexical_score, method), strongest first."""
+    if mode not in {"embedding", "lexical", "hybrid"}:
+        raise ValueError("Search mode must be embedding, lexical, or hybrid.")
+    if mode == "lexical":
+        ranked = []
+        for index, text in enumerate(texts):
+            score = lexical_overlap(query, text)
+            ranked.append((index, score, 0.0, score, "lexical"))
+        ranked.sort(key=lambda row: row[1], reverse=True)
+        return ranked
     actual_provider = embedding_provider(provider)
     if actual_provider == "sentence-transformers":
         model_name = os.getenv("STORYLAB_EMBEDDING_MODEL", _DEFAULT_ST_MODEL)
