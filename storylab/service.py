@@ -120,27 +120,51 @@ class StoryLabStore:
             project.status = "review"
         return self.save(project)
 
-    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None) -> StoryProject:
+    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0) -> StoryProject:
+        """Rank timestamped source evidence against the active story question/claim."""
         project = self.get(project_id)
         if not project.analysis:
             raise ValueError("Analyze the project before searching scenes.")
+        if not 0 <= context_seconds <= 30:
+            raise ValueError("Scene context must be between 0 and 30 seconds.")
         wanted = set(evidence_ids or [])
-        evidence = [item for item in project.analysis.evidence if item.start is not None and item.end is not None and (not wanted or item.id in wanted)]
-        existing = {scene.id for scene in project.scenes}
-        for item in evidence:
+        candidates = [e for e in project.analysis.evidence
+                      if e.start is not None and e.end is not None and
+                      (not wanted or e.id in wanted)]
+        query_text = " ".join(filter(None, [
+            query, project.brief.question, project.analysis.story.central_question
+        ])).lower().strip()
+        terms = {t.strip(".,!?;:()[]{}\"'") for t in query_text.split() if len(t.strip(".,!?;:()[]{}\"'")) > 2}
+        for item in candidates:
             if not item.source_id:
                 continue
-            if any(scene.evidence_ids == [item.id] for scene in project.scenes):
-                continue
-            source = next((src for src in project.sources if src.id == item.source_id), None)
+            source = next((s for s in project.sources if s.id == item.source_id), None)
             if not source or source.kind not in {"video", "audio"} or not source.path:
+                continue
+            haystack = " ".join((item.label, item.claim, item.supporting_text)).lower()
+            matches = sum(1 for term in terms if term in haystack)
+            if terms and matches == 0 and not wanted:
+                continue
+            lexical = matches / max(1, len(terms))
+            relevance = min(1.0, 0.5 * item.confidence + 0.5 * lexical) if terms else item.confidence
+            existing = next((s for s in project.scenes if item.id in s.evidence_ids and s.query == query_text), None)
+            if existing:
+                existing.relevance = relevance
                 continue
             project.scenes.append(Scene(
                 id=f"sn_{uuid.uuid4().hex[:10]}",
-                start=item.start, end=item.end, title=item.label or "Source moment",
-                purpose=item.claim, evidence_ids=[item.id], source_file=source.path,
-                relevance=item.confidence, extraction_status="candidate",
+                start=max(0.0, item.start - context_seconds),
+                end=item.end + context_seconds,
+                title=item.label or "Source moment",
+                purpose=item.claim,
+                evidence_ids=[item.id],
+                source_id=source.id,
+                source_file=source.path,
+                query=query_text,
+                relevance=relevance,
+                extraction_status="candidate",
             ))
+        project.scenes.sort(key=lambda s: s.relevance, reverse=True)
         return self.save(project)
 
     def link_scenes_to_script(self, project_id: str) -> StoryProject:
