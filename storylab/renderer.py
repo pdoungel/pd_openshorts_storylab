@@ -91,6 +91,39 @@ def _normalize_clip(input_path: Path, output_path: Path) -> None:
     )
 
 
+def mux_narration(video_path: str, narration_path: str, output_path: str, source_volume: float = 0.22) -> str:
+    """Mix local narrator audio over the rendered source video while preserving visuals."""
+    video = Path(video_path)
+    narration = Path(narration_path)
+    output = Path(output_path)
+    if not video.is_file():
+        raise FileNotFoundError(video_path)
+    if not narration.is_file():
+        raise FileNotFoundError(narration_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    duration = max(0.1, float(probe.stdout.strip()))
+    filter_complex = (
+        f"[0:a]volume={max(0.0, min(1.0, source_volume))}[src];"
+        "[1:a]apad,atrim=duration=" + f"{duration:.3f}" + "[vo];"
+        "[src][vo]amix=inputs=2:duration=first:dropout_transition=2[a]"
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(video), "-i", str(narration),
+         "-filter_complex", filter_complex,
+         "-map", "0:v:0", "-map", "[a]",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+         "-ar", "48000", "-t", f"{duration:.3f}", "-movflags", "+faststart",
+         str(output)],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
+    return str(output)
+
+
 def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderResult:
     """Render a review-approved Story Lab video with source visuals and story text.
 
