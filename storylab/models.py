@@ -69,6 +69,17 @@ class Theory(BaseModel):
     confidence: float = Field(default=0.5, ge=0, le=1)
 
 
+class Insight(BaseModel):
+    """A reviewable unit of story intelligence grounded in source evidence."""
+    id: str
+    type: Literal["fact", "interpretation", "question", "theory", "counterpoint", "theme", "lore", "character", "event", "relationship"]
+    title: str
+    text: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    status: Literal["unreviewed", "supported", "challenged", "approved", "rejected"] = "unreviewed"
+
+
 class StoryBuilder(BaseModel):
     hook: str = ""
     context: str = ""
@@ -133,7 +144,7 @@ class ScriptSection(BaseModel):
 
 class ReviewItem(BaseModel):
     id: str
-    target_type: Literal["evidence", "script", "render"]
+    target_type: Literal["evidence", "insight", "script", "render"]
     target_id: str
     status: Literal["pending", "approved", "changes_requested"] = "pending"
     note: str = ""
@@ -172,6 +183,7 @@ class StoryAnalysis(BaseModel):
     themes: list[str] = Field(default_factory=list)
     characters: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    insights: list[Insight] = Field(default_factory=list)
     theories: list[Theory] = Field(default_factory=list)
     story: StoryBuilder = Field(default_factory=StoryBuilder)
 
