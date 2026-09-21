@@ -133,6 +133,7 @@ class ScriptSection(BaseModel):
     heading: str
     narration: str
     evidence_ids: list[str] = Field(default_factory=list)
+    insight_ids: list[str] = Field(default_factory=list)
     scene_ids: list[str] = Field(default_factory=list)
     visual_suggestions: list[VisualSuggestion] = Field(default_factory=list)
     visual_research: list[VisualResearchItem] = Field(default_factory=list)
