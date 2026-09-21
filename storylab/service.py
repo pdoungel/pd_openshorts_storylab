@@ -121,20 +121,19 @@ class StoryLabStore:
         return self.save(project)
 
     def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0) -> StoryProject:
-        """Rank timestamped source evidence against the active story question/claim."""
+        """Rank transcript/source evidence and merge nearby hits into coherent source scenes."""
         project = self.get(project_id)
         if not project.analysis:
             raise ValueError("Analyze the project before searching scenes.")
         if not 0 <= context_seconds <= 30:
             raise ValueError("Scene context must be between 0 and 30 seconds.")
         wanted = set(evidence_ids or [])
-        candidates = [e for e in project.analysis.evidence
-                      if e.start is not None and e.end is not None and
+        candidates = [e for e in project.analysis.evidence if e.start is not None and e.end is not None and
                       (not wanted or e.id in wanted)]
-        query_text = " ".join(filter(None, [
-            query, project.brief.question, project.analysis.story.central_question
-        ])).lower().strip()
-        terms = {t.strip(".,!?;:()[]{}\"'") for t in query_text.split() if len(t.strip(".,!?;:()[]{}\"'")) > 2}
+        query_text = " ".join(filter(None, [query, project.brief.question, project.analysis.story.central_question])).lower().strip()
+        terms = {t.strip(".,!?;:()[]{}\"'") for t in query_text.split()
+                 if len(t.strip(".,!?;:()[]{}\"'")) > 2}
+        ranked = []
         for item in candidates:
             if not item.source_id:
                 continue
@@ -147,23 +146,42 @@ class StoryLabStore:
                 continue
             lexical = matches / max(1, len(terms))
             relevance = min(1.0, 0.5 * item.confidence + 0.5 * lexical) if terms else item.confidence
-            existing = next((s for s in project.scenes if item.id in s.evidence_ids and s.query == query_text), None)
-            if existing:
-                existing.relevance = relevance
-                continue
-            project.scenes.append(Scene(
-                id=f"sn_{uuid.uuid4().hex[:10]}",
-                start=max(0.0, item.start - context_seconds),
-                end=item.end + context_seconds,
-                title=item.label or "Source moment",
-                purpose=item.claim,
-                evidence_ids=[item.id],
-                source_id=source.id,
-                source_file=source.path,
-                query=query_text,
-                relevance=relevance,
-                extraction_status="candidate",
-            ))
+            ranked.append((relevance, item, source))
+        ranked.sort(key=lambda row: row[0], reverse=True)
+
+        # Keep the strongest candidate for each evidence item and merge nearby hits
+        # from the same source so a sentence split across transcript cues becomes one usable scene.
+        selected = ranked[:40]
+        grouped: dict[str, list[tuple[float, object, object]]] = {}
+        for relevance, item, source in selected:
+            grouped.setdefault(source.id, []).append((relevance, item, source))
+        for source_rows in grouped.values():
+            source_rows.sort(key=lambda row: row[1].start or 0)
+            clusters = []
+            for row in source_rows:
+                if not clusters or (row[1].start or 0) > clusters[-1]["end"] + context_seconds * 2:
+                    clusters.append({"start": row[1].start, "end": row[1].end, "rows": [row]})
+                else:
+                    clusters[-1]["end"] = max(clusters[-1]["end"], row[1].end)
+                    clusters[-1]["rows"].append(row)
+            for cluster in clusters:
+                rows = cluster["rows"]
+                evidence = [row[1] for row in rows]
+                relevance = max(row[0] for row in rows)
+                ids = [item.id for item in evidence]
+                existing = next((s for s in project.scenes if s.query == query_text and set(s.evidence_ids) == set(ids)), None)
+                if existing:
+                    existing.relevance = relevance
+                    continue
+                project.scenes.append(Scene(
+                    id=f"sn_{uuid.uuid4().hex[:10]}",
+                    start=max(0.0, (cluster["start"] or 0) - context_seconds),
+                    end=(cluster["end"] or 0) + context_seconds,
+                    title=evidence[0].label or "Source moment",
+                    purpose="; ".join(dict.fromkeys(item.claim for item in evidence if item.claim)),
+                    evidence_ids=ids, source_id=rows[0][2].id, source_file=rows[0][2].path,
+                    query=query_text, relevance=relevance, extraction_status="candidate",
+                ))
         project.scenes.sort(key=lambda s: s.relevance, reverse=True)
         return self.save(project)
 
