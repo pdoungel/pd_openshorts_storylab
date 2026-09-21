@@ -98,6 +98,34 @@ def test_story_brief_drives_theory_angle_for_series(tmp_path):
     assert "The theory" in headings
 
 
+def test_timed_evidence_becomes_extractable_scene(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:10,000 --> 00:00:12,500\nA key reveal happens.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project = store.analyze(project.id)
+    assert project.scenes
+    scene = project.scenes[0]
+    assert scene.evidence_ids == [project.analysis.evidence[0].id]
+    assert scene.start == 10.0 and scene.end == 12.5
+    assert scene.extraction_status == "candidate"
+
+
+def test_scene_search_can_limit_to_selected_evidence(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie"))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:01,000 --> 00:00:02,000\nFirst.\n\n2\n00:00:05,000 --> 00:00:06,000\nSecond.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project = store.analyze(project.id)
+    first_id = project.analysis.evidence[0].id
+    project.scenes = []
+    project = store.search_scenes(project.id, [first_id])
+    assert len(project.scenes) == 1
+    assert project.scenes[0].evidence_ids == [first_id]
+
+
 def test_project_creation_persists_story_brief(tmp_path):
     store = StoryLabStore(str(tmp_path))
     project = store.create(StoryProjectCreate(
