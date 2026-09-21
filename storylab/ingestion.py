@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import html
 import json
 import mimetypes
 import re
@@ -68,6 +69,27 @@ def _is_lyric_like(text: str) -> bool:
         if single_char_tokens / len(tokens) >= 0.70:
             return True
     # Repeated musical-note/lyric markers are rarely useful story evidence.
+    if re.search(r"(?:♪|♫|♬|🎵|🎶)", text) and len(tokens) <= 20:
+        return True
+    return False
+
+
+def _clean_subtitle_text(value: str) -> str:
+    """Normalize subtitle markup so HTML/ASS-style tags never reach Story Lab."""
+    value = html.unescape(value or "")
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\\{\\[^}]+\\}", "", value)
+    value = re.sub(r"\\s+", " ", value).strip()
+    return value
+
+
+def _is_lyric_like(text: str) -> bool:
+    """Reject common karaoke/lyrics cues, matching the Shorts subtitle safeguard."""
+    tokens = text.split()
+    if len(tokens) >= 10:
+        single_char_tokens = sum(1 for token in tokens if len(re.sub(r"[^A-Za-z]", "", token)) <= 1)
+        if single_char_tokens / len(tokens) >= 0.70:
+            return True
     if re.search(r"(?:♪|♫|♬|🎵|🎶)", text) and len(tokens) <= 20:
         return True
     return False
@@ -207,6 +229,7 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
         text = path.read_text(encoding="utf-8", errors="replace")
         segments = _timed_segments(text, source_id) if kind == "transcript" else []
         ingestion_source = "uploaded_transcript" if kind == "transcript" else "uploaded_text"
+        ingestion_source = "uploaded_transcript" if kind == "transcript" else "uploaded_text"
         if not segments:
             segments = _plain_segments(text, source_id)
     elif kind == "pdf":
@@ -231,6 +254,7 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
             transcript = transcribe_backends.transcribe_media_local(str(path))
             text = transcript.get("text", "")
             segments = []
+            ingestion_source = "local_asr"
             ingestion_source = "local_asr"
             for row in transcript.get("segments", []):
                 if not row.get("text") or row.get("start") is None or row.get("end") is None:
