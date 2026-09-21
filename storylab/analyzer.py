@@ -73,7 +73,7 @@ def _fallback_analysis(title: str, transcript: str, evidence: list[Evidence]) ->
 
 def analyze_story(title: str, transcript: str = "", duration: Optional[float] = None,
                   sources: list[SourceLocator] | None = None, angle: str = "story",
-                  kind: str = "movie") -> StoryAnalysis:
+                  kind: str = "movie", question: str = "") -> StoryAnalysis:
     sources = sources or []
     evidence = extract_source_evidence(sources)
     material = transcript or "\n".join(source.text for source in sources)
@@ -84,6 +84,7 @@ def analyze_story(title: str, transcript: str = "", duration: Optional[float] = 
         citations = "\n".join(f"[{index}] {item.supporting_text}" for index, item in enumerate(evidence[:60]))
         prompt = f"""Analyze this {kind} as a Story Lab research/writing project.
 EDITORIAL ANGLE: {angle}
+CENTRAL QUESTION: {question or "Choose the most useful question supported by the supplied material."}
 Adapt the analysis to the chosen lens:
 - story: plot/structure, stakes, turning points, payoff
 - why: answer a focused why-question using evidence and competing explanations
