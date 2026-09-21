@@ -96,3 +96,27 @@ def test_story_brief_drives_theory_angle_for_series(tmp_path):
     headings = [section.heading for section in project.script]
     assert "What is canon" in headings
     assert "The theory" in headings
+
+
+def test_project_creation_persists_story_brief(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(
+        title="Theory project",
+        kind="anime",
+        brief={"angle": "theory", "question": "Who is behind the event?", "spoiler_policy": "full"},
+    ))
+    reloaded = store.get(project.id)
+    assert reloaded.brief.angle == "theory"
+    assert reloaded.brief.question == "Who is behind the event?"
+
+
+def test_updating_story_brief_resets_analysis(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Story", brief={"angle": "story"}))
+    project = store.ingest_text(project.id, "A source passage.")
+    project = store.analyze(project.id)
+    assert project.analysis is not None
+    project = store.update_brief(project.id, project.brief.model_copy(update={"angle": "why", "question": "Why?"}))
+    assert project.analysis is None
+    assert project.script == []
+    assert project.brief.angle == "why"
