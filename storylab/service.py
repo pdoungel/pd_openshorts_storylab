@@ -153,7 +153,7 @@ class StoryLabStore:
         if not rows:
             return self.save(project)
 
-        ranked = rank_texts(query_text, [row[2] for row in rows], mode=search_mode)
+        ranked = rank_texts(query_text, [row[2] for row in rows], mode=search_mode, provider=embedding_provider)
         selected = []
         for row_index, score, semantic_score, lexical_score, method in ranked[:max_results]:
             item, source, _ = rows[row_index]
