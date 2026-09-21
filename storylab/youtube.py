@@ -60,6 +60,9 @@ def build_youtube_package(project: StoryProject, thumbnail_path: str | None = No
         angle,
         "story analysis",
         "film analysis" if project.kind in {"movie", "series", "anime", "episode"} else "documentary",
+        *((project.analysis.themes if project.analysis else [])[:8]),
+        *((project.analysis.characters if project.analysis else [])[:8]),
+        *([insight.title for insight in (project.analysis.insights if project.analysis else []) if insight.title][:8]),
     ]
     tags: list[str] = []
     for tag in raw_tags:
