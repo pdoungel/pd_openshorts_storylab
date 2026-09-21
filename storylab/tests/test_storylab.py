@@ -181,3 +181,35 @@ def test_link_scenes_to_script_is_idempotent(tmp_path):
     project = store.link_scenes_to_script(project.id)
     after = [list(section.scene_ids) for section in project.script]
     assert after == before
+
+
+def test_semantic_scene_search_ranks_matching_evidence_and_adds_context(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie", brief={"question": "Why did the character leave?"}))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:10,000 --> 00:00:12,000\nThe character leaves because the warning changes everything.\n\n2\n00:00:30,000 --> 00:00:32,000\nA landscape is shown.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.analyze(project.id)
+    project.scenes = []
+    project = store.search_scenes(project.id, query="Why did the character leave?", context_seconds=2)
+    assert project.scenes
+    assert project.scenes[0].start == 8.0
+    assert project.scenes[0].end == 14.0
+    assert project.scenes[0].query == "why did the character leave?"
+    assert project.scenes[0].relevance > 0
+
+def test_scene_search_is_idempotent_for_same_query(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Film", kind="movie", brief={"question": "Why?"}))
+    source = tmp_path/"film.srt"
+    source.write_text("1\n00:00:10,000 --> 00:00:12,000\nThe reason is explained here.\n", encoding="utf-8")
+    project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.analyze(project.id)
+    count = len(project.scenes)
+    project = store.search_scenes(project.id, query="reason", context_seconds=1)
+    assert len(project.scenes) >= count
+    project = store.search_scenes(project.id, query="reason", context_seconds=1)
+    reason_scenes = [s for s in project.scenes if s.query == "reason"]
+    assert len(reason_scenes) == 1
