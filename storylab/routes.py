@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .models import StoryProjectCreate, StoryBrief, StoryBuilder
 from .service import store
+from .tts import narration_text, narration_srt
 
 router = APIRouter(prefix="/api/storylab", tags=["storylab"])
 
@@ -215,13 +216,12 @@ async def download_narration(project_id: str):
         project = store.get(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Story Lab project not found")
-    if not project.voiceover or not project.voiceover.script_path:
-        raise HTTPException(404, "Narration script has not been generated.")
-    path = Path(project.voiceover.script_path).resolve()
-    root = store.root.resolve()
-    if root not in path.parents or not path.is_file():
-        raise HTTPException(404, "Narration script is not available.")
-    return FileResponse(str(path), media_type="text/plain; charset=utf-8", filename=f"{project.title[:80]}.narration.txt")
+    from fastapi.responses import Response
+    return Response(
+        content=narration_text(project),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{project.title[:80]}.narration.txt"'},
+    )
 
 
 @router.get("/projects/{project_id}/download/narration-srt")
@@ -230,13 +230,12 @@ async def download_narration_srt(project_id: str):
         project = store.get(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Story Lab project not found")
-    if not project.voiceover or not project.voiceover.timing_path:
-        raise HTTPException(404, "Narration timing has not been generated.")
-    path = Path(project.voiceover.timing_path).resolve()
-    root = store.root.resolve()
-    if root not in path.parents or not path.is_file():
-        raise HTTPException(404, "Narration timing is not available.")
-    return FileResponse(str(path), media_type="application/x-subrip", filename=f"{project.title[:80]}.narration.srt")
+    from fastapi.responses import Response
+    return Response(
+        content=narration_srt(project),
+        media_type="application/x-subrip",
+        headers={"Content-Disposition": f'attachment; filename="{project.title[:80]}.narration.srt"'},
+    )
 
 
 @router.get("/projects/{project_id}/download/metadata")
