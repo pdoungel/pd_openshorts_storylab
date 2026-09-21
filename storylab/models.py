@@ -8,8 +8,7 @@ class StoryProjectCreate(BaseModel):
     notes: str = Field(default="", max_length=5000)
 class Evidence(BaseModel):
     id: str
-    start: float = Field(ge=0)
-    end: float = Field(gt=0)
+    # Raw model output may contain invalid timestamps; normalize_evidence() is the trust boundary.\n    start: float\n    end: float
     label: str
     claim: str
     detail: str = ""
