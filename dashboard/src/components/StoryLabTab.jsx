@@ -55,8 +55,8 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    if (selected?.renders?.length) loadVoicebox();
-  }, [selected?.id, selected?.renders?.length]);
+    if (selected?.script?.length) loadVoicebox();
+  }, [selected?.id, selected?.script?.length]);
   useEffect(() => {
     if (selected?.analysis?.story) {
       setStoryDraft(selected.analysis.story);
@@ -144,7 +144,28 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
 
   const evidenceById = (ids = []) => {
     const lookup = Object.fromEntries((selected?.analysis?.evidence || []).map(item => [item.id, item]));
-    return ids.map(id => lookup[id]).filter(Boolean);
+    return [...new Set(ids)].map(id => lookup[id]).filter(Boolean);
+  };
+
+  const curatedEvidenceIds = () => {
+    const story = selected?.analysis?.story;
+    if (!story) return [];
+    const groups = [
+      story.hook_evidence_ids, story.context_evidence_ids, story.conflict_evidence_ids,
+      story.consequences_evidence_ids, story.significance_evidence_ids,
+      story.central_question_evidence_ids, story.interpretation_evidence_ids,
+      ...(story.timeline_evidence_ids || []), ...(story.key_event_evidence_ids || []),
+      ...(story.people_evidence_ids || []), ...(story.counterpoint_evidence_ids || []),
+      ...(story.open_question_evidence_ids || [])
+    ];
+    return [...new Set(groups.flat().filter(Boolean))];
+  };
+
+  const curatedInsights = () => {
+    const insights = selected?.analysis?.insights || [];
+    const story = selected?.analysis?.story;
+    const ids = new Set(story ? Object.values(story.component_insight_ids || {}).flat() : []);
+    return ids.size ? insights.filter(item => ids.has(item.id)) : insights;
   };
 
   const sceneById = (ids = []) => {
@@ -446,7 +467,38 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     </div>
     {selected.scenes?.length ? <div className="grid md:grid-cols-2 gap-3">{selected.scenes.map(scene=><div key={scene.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-2"><label className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" checked={scene.selected !== false} onChange={e=>selectScene(scene.id,e.target.checked)} />{scene.title}</label><span className="text-[10px] uppercase text-muted">{scene.extraction_status}</span></div><div className="text-xs text-muted mt-1">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · relevance {Math.round(scene.relevance*100)}% · {scene.search_method || 'hybrid'}</div><p className="text-xs text-ink2 mt-2">{scene.purpose}</p><div className="flex flex-wrap gap-1 mt-2">{scene.evidence_ids?.map(id=><span key={id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{id.slice(-6)}</span>)}</div><div className="mt-3">{scene.output_file ? <video className="w-full aspect-video rounded border border-rule bg-black object-contain" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} /> : <div className="w-full aspect-video rounded border border-dashed border-rule bg-paper3 flex items-center justify-center text-xs text-muted">Select this scene to extract the preview.</div>}<div className="flex items-center justify-between gap-2 mt-1"><p className="text-[10px] text-muted">source visual · {scene.extraction_status}</p>{scene.output_file && <a className="text-[10px] text-brass underline" href={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} target="_blank" rel="noreferrer">open clip</a>}</div></div></div>)}</div> : <p className="text-xs text-muted">Analyze the project, then Story Lab can search timestamp-backed source moments without Ollama or a cloud embedding service.</p>}
   </div>
-</div>}{selected.analysis?.evidence?.length>0 && <div className="space-y-2"><div className="flex items-center justify-between"><span className="readout">EVIDENCE WORKSPACE</span><span className="text-[11px] text-muted">{selected.analysis.evidence.length} cited excerpt(s)</span></div>{selected.analysis.evidence.map(e=>{ const status=evidenceStatus(e.id); return <div key={e.id} className="rounded-input border border-rule p-3"><div className="flex gap-3"><Clock3 size={14} className="text-brass mt-0.5"/><div className="min-w-0 flex-1"><div className="text-sm text-ink">{e.start != null ? e.start.toFixed(3)+'s — '+e.end.toFixed(3)+'s' : e.page ? 'page '+e.page : 'unlocated text'} · {e.label}</div><p className="text-xs text-muted mt-1">{e.claim}</p><p className="text-[11px] text-muted mt-1">{e.traceability} · confidence {Math.round(e.confidence * 100)}%</p>{e.supporting_text && <p className="text-xs text-ink2 mt-2 whitespace-pre-wrap">{e.supporting_text}</p>}<div className="flex items-center gap-2 mt-3"><span className="text-[10px] uppercase tracking-wide text-muted">{status.replace('_',' ')}</span>{status !== 'approved' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(e,'approved')}>approve evidence</button>}{status !== 'changes_requested' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(e,'changes_requested')}>request changes</button>}</div></div></div></div>})}</div>}{selected.script?.length>0 && <div className="space-y-2"><div className="flex justify-between items-center"><span className="readout">SCRIPT & VISUAL RESEARCH</span>{selected.status==='approved' && <button className="btn-primary" disabled={loading} onClick={render}><Clapperboard size={14}/> create final video</button>}</div>{selected.script.map(section=><div key={section.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-3"><div><div className="text-sm text-ink">{section.heading} · {section.duration_seconds}s</div><p className="text-xs text-muted mt-1">{section.narration}</p><p className="text-xs text-muted mt-2">Visual: {section.visual_suggestions?.map(v=>v.material_type.replace('_',' ')).join(', ')}</p>{sceneById(section.scene_ids || []).length > 0 && <div className="mt-3 rounded border border-rule p-2"><div className="text-[10px] uppercase tracking-wide text-brass">SOURCE SCENES</div><div className="mt-2 space-y-2">{sceneById(section.scene_ids || []).map(scene=><div key={scene.id} className="flex items-center justify-between gap-2"><div><div className="text-xs text-ink">{scene.title}</div><div className="text-[10px] text-muted">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · {scene.extraction_status}</div></div>{scene.extraction_status==='candidate' && <button className="btn-ghost text-[10px]" disabled={loading} onClick={()=>extractScenes([scene.id])}>extract scene</button>}</div>)}</div></div>}{section.visual_research?.length>0 && <div className="mt-3 space-y-2">{section.visual_research.map(v=><div key={v.id} className="rounded border border-rule p-2"><div className="flex justify-between gap-2"><span className="text-xs text-ink">{v.material_type.replace('_',' ')}: {v.description}</span><button className="btn-ghost text-[11px]" disabled={loading||v.status==='approved'} onClick={()=>reviewVisual(v)}>{v.status==='approved'?'visual approved':'approve visual'}</button></div><p className="text-[10px] text-muted mt-1">{v.evidence_ids?.length||0} evidence link(s){v.source_id ? ' · source linked' : ' · asset needed'}</p></div>)}</div>}</div><button className="btn-ghost" disabled={loading||section.approved} onClick={()=>review(section)}>{section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}</button></div></div>)}</div>}
+</div>}{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
+  <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
+    <div className="flex items-center justify-between gap-3">
+      <div><span className="readout">EVIDENCE FOR THIS ANGLE</span><p className="text-xs text-muted mt-1">Only evidence linked to the generated question, theory, story sections and counterpoints is shown here. The full transcript remains available below.</p></div>
+      <span className="text-[11px] text-muted">{evidenceById(curatedEvidenceIds()).length} relevant excerpt(s)</span>
+    </div>
+    <div className="grid sm:grid-cols-2 gap-2">
+      {curatedInsights().slice(0, 8).map(insight => <div key={insight.id} className="rounded border border-rule p-3">
+        <div className="flex items-center justify-between gap-2"><span className="text-[10px] uppercase tracking-wide text-brass">{insight.type}</span><span className="text-[10px] text-muted">{Math.round(insight.confidence * 100)}%</span></div>
+        <div className="text-xs text-ink mt-1">{insight.title}</div>
+        <p className="text-[11px] text-ink2 mt-1">{insight.text}</p>
+        <p className="text-[10px] text-muted mt-2">{insight.evidence_ids?.length || 0} linked source excerpt(s)</p>
+      </div>)}
+    </div>
+    <div className="space-y-2">
+      {evidenceById(curatedEvidenceIds()).slice(0, 24).map(e => <div key={e.id} className="rounded border border-rule p-3">
+        <div className="text-xs text-ink">{e.start != null ? e.start.toFixed(3)+'s — '+e.end.toFixed(3)+'s' : e.page ? 'page '+e.page : 'unlocated text'} · {e.label}</div>
+        <p className="text-[11px] text-ink2 mt-1">{e.claim}</p>
+        <p className="text-[10px] text-muted mt-1">{e.traceability} · confidence {Math.round(e.confidence * 100)}%</p>
+      </div>)}
+    </div>
+  </div>
+  <details className="rounded-input border border-rule p-4">
+    <summary className="cursor-pointer text-xs text-ink">Show all source excerpts ({selected.analysis.evidence.length})</summary>
+    <div className="mt-3 space-y-2">
+      {selected.analysis.evidence.map(e => <div key={e.id} className="rounded border border-rule p-3">
+        <div className="text-xs text-ink">{e.start != null ? e.start.toFixed(3)+'s — '+e.end.toFixed(3)+'s' : e.page ? 'page '+e.page : 'unlocated text'} · {e.label}</div>
+        <p className="text-[11px] text-muted mt-1">{e.claim}</p>
+      </div>)}
+    </div>
+  </details>
+</div>}{selected.script?.length>0 && <div className="space-y-2"><div className="flex justify-between items-center"><span className="readout">SCRIPT & VISUAL RESEARCH</span>{selected.status==='approved' && <button className="btn-primary" disabled={loading} onClick={render}><Clapperboard size={14}/> create final video</button>}</div>{selected.script.map(section=><div key={section.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-3"><div><div className="text-sm text-ink">{section.heading} · {section.duration_seconds}s</div><p className="text-xs text-muted mt-1">{section.narration}</p><p className="text-xs text-muted mt-2">Visual: {section.visual_suggestions?.map(v=>v.material_type.replace('_',' ')).join(', ')}</p>{sceneById(section.scene_ids || []).length > 0 && <div className="mt-3 rounded border border-rule p-2"><div className="text-[10px] uppercase tracking-wide text-brass">SOURCE SCENES</div><div className="mt-2 space-y-2">{sceneById(section.scene_ids || []).map(scene=><div key={scene.id} className="flex items-center justify-between gap-2"><div><div className="text-xs text-ink">{scene.title}</div><div className="text-[10px] text-muted">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · {scene.extraction_status}</div></div>{scene.extraction_status==='candidate' && <button className="btn-ghost text-[10px]" disabled={loading} onClick={()=>extractScenes([scene.id])}>extract scene</button>}</div>)}</div></div>}{section.visual_research?.length>0 && <div className="mt-3 space-y-2">{section.visual_research.map(v=><div key={v.id} className="rounded border border-rule p-2"><div className="flex justify-between gap-2"><span className="text-xs text-ink">{v.material_type.replace('_',' ')}: {v.description}</span><button className="btn-ghost text-[11px]" disabled={loading||v.status==='approved'} onClick={()=>reviewVisual(v)}>{v.status==='approved'?'visual approved':'approve visual'}</button></div><p className="text-[10px] text-muted mt-1">{v.evidence_ids?.length||0} evidence link(s){v.source_id ? ' · source linked' : ' · asset needed'}</p></div>)}</div>}</div><button className="btn-ghost" disabled={loading||section.approved} onClick={()=>review(section)}>{section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}</button></div></div>)}</div>}
 {selected.script?.length>0 && <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
@@ -486,11 +538,11 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     })}
   </div>
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-    <p className="text-[11px] text-muted">Render uses the approved script order and only selected, section-linked source scenes. Nothing is published automatically.</p>
-    <button className="btn-primary" disabled={loading || selected.status !== 'approved'} onClick={render}><Clapperboard size={14}/> create final video</button>
+    <p className="text-[11px] text-muted">Final render uses the approved script, extracted section-linked source scenes and the generated Voicebox narration. Nothing is published automatically.</p>
+    <button className="btn-primary" disabled={loading || selected.status !== 'approved' || selected.voiceover?.status !== 'generated'} onClick={render}><Clapperboard size={14}/> create final video</button>
   </div>
 </div>}
-{selected.renders?.length>0 && <div className="space-y-4">
+{selected.script?.length>0 && <div className="space-y-4">
 <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
@@ -510,7 +562,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
       </div>
       <div className="flex gap-2">
         <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>refresh</button>
-        <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>generate voiceover + final video</button>
+        <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>generate voiceover</button>
       </div>
     </div>
     {selected.voiceover?.status === 'generated' && <p className="text-[11px] text-emerald-700 mt-2">Voiceover generated with Voicebox and mixed into the latest final video.</p>}
@@ -518,7 +570,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <p className="text-[10px] text-muted mt-2">No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.</p>
   </div>
 </div>
-<div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <div className="rounded border border-rule p-3 space-y-4">
+{selected.renders?.length>0 && <div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <div className="rounded border border-rule p-3 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
     <div><span className="readout">YOUTUBE UPLOAD PACKAGE</span><p className="text-[11px] text-muted mt-1">Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.</p></div>
     <button className="btn-ghost text-[11px]" type="button" onClick={copyAllMetadata}><Copy size={13}/>{copiedMetadata === 'all' ? 'copied all' : 'copy all'}</button>
