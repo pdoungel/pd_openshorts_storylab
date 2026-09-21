@@ -166,3 +166,51 @@ async def review_visual(project_id: str, payload: ReviewRequest):
 @router.post("/projects/{project_id}/render")
 async def render_project(project_id: str):
     return _project_or_404(lambda: store.render(project_id))
+
+
+@router.get("/projects/{project_id}/download/render")
+async def download_render(project_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    if not project.renders:
+        raise HTTPException(404, "No Story Lab render is available.")
+    artifact = project.renders[-1]
+    if artifact.status != "rendered" or not artifact.output_path:
+        raise HTTPException(409, "The latest Story Lab render is not ready.")
+    path = Path(artifact.output_path).resolve()
+    root = store.root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Rendered file is not available.")
+    return FileResponse(str(path), media_type="video/mp4", filename=f"{project.title[:80]}.mp4")
+
+
+@router.get("/projects/{project_id}/download/metadata")
+async def download_metadata(project_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    if not project.youtube:
+        raise HTTPException(404, "Story Lab publishing metadata is not available.")
+    import json
+    payload = json.dumps(project.youtube.model_dump(), ensure_ascii=False, indent=2)
+    from fastapi.responses import Response
+    return Response(content=payload, media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{project.title[:80]}.metadata.json"'})
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/file")
+async def download_scene(project_id: str, scene_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    scene = next((item for item in project.scenes if item.id == scene_id), None)
+    if not scene or not scene.output_file:
+        raise HTTPException(404, "Scene clip is not available.")
+    path = Path(scene.output_file).resolve()
+    root = store.root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Scene clip is not available.")
+    return FileResponse(str(path), media_type="video/mp4", filename=f"{scene.id}.mp4")
