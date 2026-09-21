@@ -121,8 +121,7 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
         ]
 
     for heading, narration, ids in plans:
-        if narration:
-            selected_types = {
+        selected_types = {
                 "The question": {"question"},
                 "What the sources establish": {"fact", "event"},
                 "The explanation": {"interpretation", "theory"},
@@ -141,8 +140,9 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
                 "Possible interpretations": {"interpretation", "theory"},
                 "What remains ambiguous": {"question"},
                 "Meaning / takeaway": {"theme", "interpretation"},
-            }.get(heading, {"fact", "event"})
-            narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
+        }.get(heading, {"fact", "event"})
+        narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
+        if narration:
             linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
             if not linked:
                 linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
