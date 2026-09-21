@@ -49,6 +49,20 @@ class StoryLabStore:
                 pass
         return sorted(projects, key=lambda project: project.updated_at, reverse=True)
 
+    def delete(self, project_id: str) -> None:
+        """Permanently remove a Story Lab project and all project-owned artifacts."""
+        project_path = self._path(project_id)
+        if not project_path.is_file():
+            raise FileNotFoundError(project_id)
+
+        # All Story Lab project data is namespaced by the validated UUID. Remove
+        # the JSON record plus source snapshots, extracted scenes and renders.
+        project_path.unlink()
+        for relative in (Path("sources") / project_id, Path("scenes") / project_id, Path("renders") / project_id):
+            path = self.root / relative
+            if path.exists():
+                shutil.rmtree(path)
+
     def create(self, payload: StoryProjectCreate) -> StoryProject:
         now = datetime.now(timezone.utc).isoformat()
         project = StoryProject(id=str(uuid.uuid4()), title=payload.title.strip(), kind=payload.kind,
