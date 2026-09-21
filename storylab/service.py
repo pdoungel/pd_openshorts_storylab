@@ -120,9 +120,15 @@ class StoryLabStore:
             raise ValueError("Unknown script section")
         if target_type == "evidence" and target_id not in {item.id for item in (project.analysis.evidence if project.analysis else [])}:
             raise ValueError("Unknown evidence")
+        if target_type == "insight" and target_id not in {item.id for item in (project.analysis.insights if project.analysis else [])}:
+            raise ValueError("Unknown insight")
         now = datetime.now(timezone.utc).isoformat()
         project.reviews = [item for item in project.reviews if not (item.target_type == target_type and item.target_id == target_id)]
         project.reviews.append(ReviewItem(id=f"rv_{uuid.uuid4().hex[:10]}", target_type=target_type, target_id=target_id, status=status, note=note, updated_at=now))
+        if target_type == "insight" and project.analysis:
+            for insight in project.analysis.insights:
+                if insight.id == target_id:
+                    insight.status = {"approved": "approved", "changes_requested": "challenged"}.get(status, "unreviewed")
         if target_type == "script":
             for section in project.script:
                 if section.id == target_id:
