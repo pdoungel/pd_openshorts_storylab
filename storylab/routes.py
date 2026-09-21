@@ -25,6 +25,8 @@ class TextSourceRequest(BaseModel):
 class SceneRequest(BaseModel):
     scene_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    query: str = Field(default="", max_length=2000)
+    context_seconds: float = Field(default=3.0, ge=0, le=30)
 
 
 class ReviewRequest(BaseModel):
@@ -91,7 +93,7 @@ async def analyze_project(project_id: str, payload: AnalyzeRequest):
 
 @router.post("/projects/{project_id}/scenes/search")
 async def search_scenes(project_id: str, payload: SceneRequest):
-    return _project_or_404(lambda: store.search_scenes(project_id, payload.evidence_ids))
+    return _project_or_404(lambda: store.search_scenes(project_id, payload.evidence_ids, payload.query, payload.context_seconds))
 
 
 @router.post("/projects/{project_id}/scenes/extract")
