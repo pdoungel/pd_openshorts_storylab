@@ -92,6 +92,7 @@ class StoryLabStore:
             project.scenes = []
             self.save(project)
             self.search_scenes(project.id)
+            self.link_scenes_to_script(project.id)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
@@ -140,6 +141,24 @@ class StoryLabStore:
                 purpose=item.claim, evidence_ids=[item.id], source_file=source.path,
                 relevance=item.confidence, extraction_status="candidate",
             ))
+        return self.save(project)
+
+    def link_scenes_to_script(self, project_id: str) -> StoryProject:
+        """Attach source scenes to script sections through shared evidence IDs."""
+        project = self.get(project_id)
+        if not project.analysis:
+            raise ValueError("Analyze the project before linking scenes.")
+        scenes_by_evidence: dict[str, list[str]] = {}
+        for scene in project.scenes:
+            for evidence_id in scene.evidence_ids:
+                scenes_by_evidence.setdefault(evidence_id, []).append(scene.id)
+        for section in project.script:
+            linked: list[str] = []
+            for evidence_id in section.evidence_ids:
+                for scene_id in scenes_by_evidence.get(evidence_id, []):
+                    if scene_id not in linked:
+                        linked.append(scene_id)
+            section.scene_ids = linked
         return self.save(project)
 
     def extract_scenes(self, project_id: str, scene_ids: list[str] | None = None) -> StoryProject:
