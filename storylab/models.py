@@ -163,7 +163,7 @@ class Scene(BaseModel):
     relevance: float = Field(default=1.0, ge=0, le=1)
     semantic_score: float = Field(default=0.0, ge=0, le=1)
     lexical_score: float = Field(default=0.0, ge=0, le=1)
-    search_method: Literal["hybrid-local-vector", "local-vector", "lexical"] = "hybrid-local-vector"
+    search_method: Literal["hybrid-local-vector", "hybrid-sentence-transformers", "local-vector", "sentence-transformers", "lexical"] = "hybrid-local-vector"
     extraction_status: Literal["candidate", "extracted", "error"] = "candidate"
 
 
