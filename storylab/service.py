@@ -172,6 +172,9 @@ class StoryLabStore:
         }
         project.analysis.story = story
         project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
+        self.save(project)
+        self.link_scenes_to_script(project_id)
+        project = self.get(project_id)
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
         project.renders = []
         project.status = "review"
