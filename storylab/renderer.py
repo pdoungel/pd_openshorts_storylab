@@ -18,7 +18,11 @@ def extract_scene(source_path: str, output_path: str, start: float, end: float) 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", source_path,
-         "-t", f"{end-start:.3f}", "-c", "copy", output_path],
+         "-t", f"{end-start:.3f}",
+         "-map", "0:v:0", "-map", "0:a:0?",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+         "-movflags", "+faststart", output_path],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
     )
     return output_path
