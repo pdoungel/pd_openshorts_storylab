@@ -83,6 +83,11 @@ async def review_project(project_id: str, payload: ReviewRequest):
     return _project_or_404(lambda: store.review(project_id, payload.target_type, payload.target_id, payload.status, payload.note))
 
 
+@router.post("/projects/{project_id}/visual-review")
+async def review_visual(project_id: str, payload: ReviewRequest):
+    return _project_or_404(lambda: store.review_visual(project_id, payload.target_id, payload.status, payload.note))
+
+
 @router.post("/projects/{project_id}/render")
 async def render_project(project_id: str):
     return _project_or_404(lambda: store.render(project_id))
