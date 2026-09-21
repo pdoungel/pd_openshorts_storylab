@@ -55,6 +55,28 @@ class _LLMAnalysis(BaseModel):
     theories: list[_LLMTheory] = Field(default_factory=list)
 
 
+
+
+def _insight_map(insights: list[Insight]) -> dict[str, list[str]]:
+    groups = {}
+    for kind in ("fact", "event", "character", "relationship", "interpretation", "theory", "counterpoint", "theme", "lore", "question"):
+        groups[kind] = [item.id for item in insights if item.type == kind]
+    return {
+        "hook": groups["fact"][:2],
+        "context": groups["fact"][:4],
+        "timeline": groups["fact"][:6] + groups["event"][:6],
+        "key_events": groups["event"][:6] + groups["fact"][:4],
+        "people": groups["character"][:5] + groups["relationship"][:5],
+        "conflict": groups["counterpoint"][:4] + groups["theory"][:2],
+        "consequences": groups["fact"][-3:],
+        "significance": groups["theme"][:4] + groups["interpretation"][:4] + groups["lore"][:3],
+        "central_question": groups["question"][:3],
+        "interpretation": groups["interpretation"][:5] + groups["theory"][:3],
+        "counterpoints": groups["counterpoint"][:5],
+        "open_questions": groups["question"][:5],
+    }
+
+
 def _fallback_analysis(title: str, transcript: str, evidence: list[Evidence]) -> StoryAnalysis:
     text = " ".join((transcript or "").split())
     summary = text[:1200] if text else f"Story Lab project: {title}. Add a transcript or source media to analyze the story."
@@ -87,6 +109,7 @@ def _fallback_analysis(title: str, transcript: str, evidence: list[Evidence]) ->
         interpretation="Keep interpretation visibly separate from source-established facts.",
         open_questions=[i.text for i in question_insights[:5]] or ["What remains unsupported or ambiguous in the available material?"],
         hook_evidence_ids=fact_insights[0].evidence_ids if fact_insights else ids[:1],
+        component_insight_ids=_insight_map(insights),
         context_evidence_ids=[eid for i in fact_insights[:3] for eid in i.evidence_ids] or ids[:2],
         timeline_evidence_ids=[i.evidence_ids for i in fact_insights[:5]],
         key_event_evidence_ids=[i.evidence_ids for i in event_insights[:5]] or grouped,
@@ -172,6 +195,7 @@ Return JSON matching the schema. Every story component must cite supplied excerp
             interpretation_evidence_ids=valid(parsed.interpretation_evidence_indexes) or [eid for i in interpretations[:3] for eid in i.evidence_ids],
             counterpoint_evidence_ids=grouped_valid(parsed.counterpoint_evidence_indexes) or [i.evidence_ids for i in counterpoints[:5]],
             open_question_evidence_ids=grouped_valid(parsed.open_question_evidence_indexes) or [i.evidence_ids for i in questions[:5]],
+            component_insight_ids=_insight_map(insights),
         )
         return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, insights=insights, theories=theories,
                              story=story)
