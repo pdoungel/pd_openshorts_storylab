@@ -595,6 +595,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
 </div>
 </>}
 </div>}
+</div>
       </section>
     </div>
     {loading && busyLabel === 'Analyzing story…' && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="card max-w-md w-full p-6 text-center shadow-xl"><div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-brass border-t-transparent animate-spin"></div><div className="readout text-brass">ANALYZING STORY</div><p className="text-sm text-ink mt-2">Story Lab is reading the supplied sources, extracting evidence, building insights and generating the story outline.</p><p className="text-xs text-muted mt-2">This can take a while for video/audio because transcription may run first.</p></div></div>}
