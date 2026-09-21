@@ -151,6 +151,25 @@ class StoryLabStore:
         unknown = [item for item in all_story_evidence if item not in evidence_ids]
         if unknown:
             raise ValueError(f"Unknown evidence: {unknown[0]}")
+        # Automatically connect story components to extracted scenes through shared evidence.
+        component_evidence = {
+            "hook": story.hook_evidence_ids,
+            "context": story.context_evidence_ids,
+            "timeline": [eid for group in story.timeline_evidence_ids for eid in group],
+            "key_events": [eid for group in story.key_event_evidence_ids for eid in group],
+            "people": [eid for group in story.people_evidence_ids for eid in group],
+            "conflict": story.conflict_evidence_ids,
+            "consequences": story.consequences_evidence_ids,
+            "significance": story.significance_evidence_ids,
+            "central_question": story.central_question_evidence_ids,
+            "interpretation": story.interpretation_evidence_ids,
+            "counterpoints": [eid for group in story.counterpoint_evidence_ids for eid in group],
+            "open_questions": [eid for group in story.open_question_evidence_ids for eid in group],
+        }
+        story.component_scene_ids = {
+            component: [scene.id for scene in project.scenes if any(eid in component_ids for eid in scene.evidence_ids)]
+            for component, component_ids in component_evidence.items()
+        }
         project.analysis.story = story
         project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
