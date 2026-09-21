@@ -57,14 +57,7 @@ async def get_project(project_id: str):
 
 @router.post("/projects/{project_id}/brief")
 async def update_brief(project_id: str, payload: StoryBrief):
-    def action():
-        project = store.get(project_id)
-        project.brief = payload
-        project.analysis = None
-        project.script = []
-        project.status = "ingested" if project.sources else "draft"
-        return store.save(project)
-    return _project_or_404(action)
+    return _project_or_404(lambda: store.update_brief(project_id, payload))
 
 @router.post("/projects/{project_id}/sources/text")
 async def add_text_source(project_id: str, payload: TextSourceRequest):
