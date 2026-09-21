@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .models import StoryProjectCreate, StoryBrief, StoryBuilder
