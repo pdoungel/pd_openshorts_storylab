@@ -4,7 +4,13 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class StoryBrief(BaseModel):
+    angle: Literal["story","why","theory","character","theme","lore","worldbuilding","ending","adaptation","review","documentary"] = "story"
+    question: str = Field(default="", max_length=2000)
+
+
 class StoryProjectCreate(BaseModel):
+    brief: StoryBrief = Field(default_factory=StoryBrief)
     title: str = Field(min_length=1, max_length=240)
     kind: Literal["movie", "series", "anime", "episode", "documentary", "other"] = "movie"
     source_path: Optional[str] = None
