@@ -147,6 +147,14 @@ Adapt the analysis to the chosen lens:
 - review: distinguish observations from subjective evaluation
 - documentary: factual narrative structure with explicit provenance
 TITLE: {title}
+OUTPUT LANGUAGE: English
+
+LANGUAGE REQUIREMENT:
+- Write EVERY returned field in English: summary, themes, characters, hook, context, timeline, key events, people, conflict, consequences, significance, central question, interpretation, counterpoints, open questions, insight titles/text, and theory titles/claims.
+- The supplied source may be Japanese, Korean, Chinese, Hindi, Thadou-Kuki, or any other language. Translate source meaning into natural English before using it in the analysis.
+- Never copy non-English source dialogue into the story fields unless it is a proper name or an established title/term whose original spelling is necessary. If an original-language term is important, give the English meaning first.
+- Do not answer in the source language merely because the source is in that language.
+
 SOURCE EXCERPTS:
 {citations}
 
