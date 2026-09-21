@@ -165,6 +165,18 @@ class RenderArtifact(BaseModel):
     created_at: str
 
 
+class VoiceoverArtifact(BaseModel):
+    """Locally generated narration produced by the configured Story Lab TTS provider."""
+    status: Literal["pending", "generating", "generated", "error"] = "pending"
+    provider: str = "voicebox"
+    profile_id: Optional[str] = None
+    script_path: Optional[str] = None
+    timing_path: Optional[str] = None
+    audio_path: Optional[str] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class YouTubePackage(BaseModel):
     """Editable YouTube-ready publishing metadata for the rendered long-form video."""
     title: str = ""
@@ -226,4 +238,5 @@ class StoryProject(BaseModel):
     reviews: list[ReviewItem] = Field(default_factory=list)
     renders: list[RenderArtifact] = Field(default_factory=list)
     youtube: Optional[YouTubePackage] = None
+    voiceover: Optional[VoiceoverArtifact] = None
     error: Optional[str] = None
