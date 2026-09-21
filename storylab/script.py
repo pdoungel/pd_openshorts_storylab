@@ -58,12 +58,18 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
         return rows[:limit]
 
     def drive(narration, ids, types=None):
+        # Insights are provenance/review data, not narration copy. Earlier versions
+        # appended every matching insight to the script, which duplicated source
+        # material and could turn internal analysis instructions into narration.
         rows = select_insights(types)
-        if rows:
-            insight_text = " ".join(i.text for i in rows)
-            narration = f"{narration.strip()} {insight_text}".strip()
-            ids = list(dict.fromkeys((ids or []) + [eid for i in rows for eid in i.evidence_ids]))
-        return narration, ids, rows
+        base_ids = list(ids or [])
+        if base_ids:
+            scoped = [row for row in rows if set(row.evidence_ids).intersection(base_ids)]
+            rows = scoped or rows
+        ids = list(dict.fromkeys(base_ids + [eid for row in rows for eid in row.evidence_ids]))
+        if not narration.strip() and rows:
+            narration = " ".join(row.text for row in rows[:3]).strip()
+        return narration.strip(), ids, rows
 
     hook_evidence = _evidence_by_ids(analysis, story.hook_evidence_ids) or _fallback_slice(evidence, 0, 2)
     sections.append(_section("Hook", story.hook or analysis.summary[:500], hook_evidence))
@@ -77,7 +83,7 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("The question", story.central_question or story.context, story.central_question_evidence_ids or story.context_evidence_ids),
             ("What the sources establish", story.context or analysis.summary, story.context_evidence_ids),
             ("The explanation", story.interpretation or story.conflict, story.interpretation_evidence_ids or story.conflict_evidence_ids),
-            ("Counterpoints", " ".join(story.counterpoints) or "Test the explanation against contrary evidence.", [i for group in story.counterpoint_evidence_ids for i in group]),
+            ("Counterpoints", " ".join(story.counterpoints), [i for group in story.counterpoint_evidence_ids for i in group]),
             ("Implications", story.significance or story.consequences, story.significance_evidence_ids or story.consequences_evidence_ids),
         ]
     elif angle == "theory":
@@ -85,8 +91,8 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("The question", story.central_question or story.hook, story.central_question_evidence_ids or story.hook_evidence_ids),
             ("What is canon", story.context, story.context_evidence_ids),
             ("The theory", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
-            ("Evidence for and against", " ".join(story.counterpoints) or "Separate supporting clues from evidence that weakens the theory.", [i for group in story.counterpoint_evidence_ids for i in group] or story.significance_evidence_ids),
-            ("What remains unknown", " ".join(story.open_questions) or "Mark unresolved points instead of presenting them as fact.", [i for group in story.open_question_evidence_ids for i in group]),
+            ("Evidence for and against", " ".join(story.counterpoints), [i for group in story.counterpoint_evidence_ids for i in group] or story.significance_evidence_ids),
+            ("What remains unknown", " ".join(story.open_questions), [i for group in story.open_question_evidence_ids for i in group]),
         ]
     elif angle == "character":
         plans = [
@@ -101,7 +107,7 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("Setup", story.context or story.hook, story.context_evidence_ids or story.hook_evidence_ids),
             ("Evidence in the story", " ".join(story.key_events[:5]), [i for group in story.key_event_evidence_ids for i in group]),
             ("Patterns and meaning", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
-            ("Open questions", " ".join(story.open_questions) or "Identify gaps that require more source material.", [i for group in story.open_question_evidence_ids for i in group]),
+            ("Open questions", " ".join(story.open_questions), [i for group in story.open_question_evidence_ids for i in group]),
         ]
     elif angle == "ending":
         plans = [
@@ -109,7 +115,7 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("The final turning point", story.key_events[-1] if story.key_events else story.consequences, story.key_event_evidence_ids[-1] if story.key_event_evidence_ids else story.consequences_evidence_ids),
             ("What the ending establishes", story.consequences, story.consequences_evidence_ids),
             ("Possible interpretations", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
-            ("What remains ambiguous", " ".join(story.open_questions) or "Mark unresolved ambiguity.", [i for group in story.open_question_evidence_ids for i in group]),
+            ("What remains ambiguous", " ".join(story.open_questions), [i for group in story.open_question_evidence_ids for i in group]),
         ]
     else:
         plans = [
