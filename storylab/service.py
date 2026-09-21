@@ -11,6 +11,7 @@ from .ingestion import ingest_file
 from .models import RenderArtifact, ReviewItem, Scene, StoryBuilder, StoryProject, StoryProjectCreate
 from .renderer import render_documentary, extract_scene
 from .script import build_script
+from .youtube import build_youtube_package
 
 
 class StoryLabStore:
@@ -110,6 +111,7 @@ class StoryLabStore:
         project.scenes = []
         project.reviews = []
         project.renders = []
+        project.youtube = None
         project.status = "ingested" if project.sources else "new"
         project.error = None
         return self.save(project)
@@ -177,6 +179,7 @@ class StoryLabStore:
         project = self.get(project_id)
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
         project.renders = []
+        project.youtube = None
         project.status = "review"
         project.error = None
         return self.save(project)
@@ -309,6 +312,19 @@ class StoryLabStore:
             section.scene_ids = linked
         return self.save(project)
 
+    def select_scenes(self, project_id: str, scene_ids: list[str]) -> StoryProject:
+        """Persist the exact source scenes the final long-form assembly should use."""
+        project = self.get(project_id)
+        known = {scene.id for scene in project.scenes}
+        unknown = [scene_id for scene_id in scene_ids if scene_id not in known]
+        if unknown:
+            raise ValueError(f"Unknown scene: {unknown[0]}")
+        selected = set(scene_ids)
+        for scene in project.scenes:
+            scene.selected = scene.id in selected
+        self.link_scenes_to_script(project_id)
+        return self.save(self.get(project_id))
+
     def extract_scenes(self, project_id: str, scene_ids: list[str] | None = None) -> StoryProject:
         project = self.get(project_id)
         target_ids = set(scene_ids or [scene.id for scene in project.scenes if scene.extraction_status == "candidate"])
@@ -350,6 +366,7 @@ class StoryLabStore:
         project.renders.append(artifact); self.save(project)
         try:
             result = render_documentary(project, self.root / "renders" / project.id)
+            project.youtube = build_youtube_package(project)
             artifact.status = "rendered"; artifact.output_path = result.output_path; artifact.manifest_path = result.manifest_path
             project.status = "rendered"; project.error = None
         except Exception as exc:
