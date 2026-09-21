@@ -211,7 +211,7 @@ def _embedded_english_subtitles(path: Path, source_id: str) -> tuple[str, list[T
                 continue
             segments = _timed_segments(subtitle_text, source_id)
             if segments:
-                return subtitle_text, segments
+                return "\n".join(segment.text for segment in segments), segments
         except (FileNotFoundError, subprocess.SubprocessError):
             continue
     return None
@@ -228,6 +228,10 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
     if kind in {"text", "transcript"}:
         text = path.read_text(encoding="utf-8", errors="replace")
         segments = _timed_segments(text, source_id) if kind == "transcript" else []
+        if segments:
+            text = "\n".join(segment.text for segment in segments)
+        else:
+            text = _clean_subtitle_text(text)
         ingestion_source = "uploaded_transcript" if kind == "transcript" else "uploaded_text"
         ingestion_source = "uploaded_transcript" if kind == "transcript" else "uploaded_text"
         if not segments:
