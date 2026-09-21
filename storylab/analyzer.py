@@ -5,12 +5,20 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .evidence import extract_source_evidence
-from .models import Evidence, SourceLocator, StoryAnalysis, StoryBuilder, Theory
+from .models import Evidence, Insight, SourceLocator, StoryAnalysis, StoryBuilder, Theory
 
 
 class _LLMTheory(BaseModel):
     title: str
     claim: str
+    evidence_indexes: list[int] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class _LLMInsight(BaseModel):
+    type: str = "fact"
+    title: str
+    text: str
     evidence_indexes: list[int] = Field(default_factory=list)
     confidence: float = 0.5
 
@@ -43,6 +51,7 @@ class _LLMAnalysis(BaseModel):
     interpretation_evidence_indexes: list[int] = Field(default_factory=list)
     counterpoint_evidence_indexes: list[list[int]] = Field(default_factory=list)
     open_question_evidence_indexes: list[list[int]] = Field(default_factory=list)
+    insights: list[_LLMInsight] = Field(default_factory=list)
     theories: list[_LLMTheory] = Field(default_factory=list)
 
 
@@ -52,8 +61,18 @@ def _fallback_analysis(title: str, transcript: str, evidence: list[Evidence]) ->
     excerpts = [item.claim for item in evidence[:5]]
     ids = [item.id for item in evidence[:5]]
     grouped = [[item.id] for item in evidence[:5]]
+    insights = [
+        Insight(id=f"in_{uuid.uuid4().hex[:10]}", type="fact", title=item.label or "Source fact",
+                text=item.claim, evidence_ids=[item.id], confidence=item.confidence, status="supported")
+        for item in evidence[:5] if item.claim
+    ]
+    if evidence:
+        insights.append(Insight(id=f"in_{uuid.uuid4().hex[:10]}", type="question",
+                                title="Open research question",
+                                text="What remains unsupported or ambiguous in the available material?",
+                                evidence_ids=[item.id for item in evidence[:2]], confidence=0.5))
     return StoryAnalysis(
-        summary=summary, evidence=evidence,
+        summary=summary, evidence=evidence, insights=insights,
         story=StoryBuilder(hook=summary[:300], context=summary[:600], timeline=excerpts, key_events=excerpts,
                            people=[], conflict="Identify the competing goals in the cited material before making an interpretive claim.",
                            consequences="Use the cited record to explain what changed.",
@@ -100,16 +119,22 @@ TITLE: {title}
 SOURCE EXCERPTS:
 {citations}
 
-Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts."""
+Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every insight and theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts."""
 
         data, _ = llm_backend.generate_json(prompt, _LLMAnalysis)
         parsed = _LLMAnalysis.model_validate(data)
+        allowed_insight_types = {"fact", "interpretation", "question", "theory", "counterpoint", "theme", "lore", "character", "event", "relationship"}
+        insights = [Insight(id=f"in_{uuid.uuid4().hex[:10]}",
+                           type=item.type if item.type in allowed_insight_types else "fact",
+                           title=item.title, text=item.text,
+                           evidence_ids=valid(item.evidence_indexes),
+                           confidence=max(0, min(1, item.confidence))) for item in parsed.insights]
         theories = [Theory(id=f"th_{uuid.uuid4().hex[:10]}", title=item.title, claim=item.claim,
                            evidence_ids=[evidence[index].id for index in item.evidence_indexes if 0 <= index < len(evidence)],
                            confidence=max(0, min(1, item.confidence))) for item in parsed.theories]
         valid = lambda indexes: [evidence[i].id for i in indexes if 0 <= i < len(evidence)]
         grouped_valid = lambda groups: [valid(group) for group in groups]
-        return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, theories=theories,
+        return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, insights=insights, theories=theories,
                              story=StoryBuilder(
                                  hook=parsed.hook, context=parsed.context, timeline=parsed.timeline,
                                  key_events=parsed.key_events, people=parsed.people, conflict=parsed.conflict,
