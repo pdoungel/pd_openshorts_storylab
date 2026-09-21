@@ -8,7 +8,7 @@ from typing import Optional
 
 from .analyzer import analyze_story
 from .ingestion import ingest_file
-from .models import RenderArtifact, ReviewItem, Scene, StoryProject, StoryProjectCreate
+from .models import RenderArtifact, ReviewItem, Scene, StoryBuilder, StoryProject, StoryProjectCreate
 from .renderer import render_documentary, extract_scene
 from .script import build_script
 
@@ -111,6 +111,51 @@ class StoryLabStore:
         project.reviews = []
         project.renders = []
         project.status = "ingested" if project.sources else "new"
+        project.error = None
+        return self.save(project)
+
+
+
+    def update_story(self, project_id: str, story: StoryBuilder) -> StoryProject:
+        """Persist editorially approved/edited story structure without re-running research."""
+        project = self.get(project_id)
+        if not project.analysis:
+            raise ValueError("Analyze the project before editing the story.")
+        insight_ids = {item.id for item in project.analysis.insights}
+        scene_ids = {scene.id for scene in project.scenes}
+        components = {"hook", "context", "timeline", "key_events", "people", "conflict", "consequences", "significance", "central_question", "interpretation", "counterpoints", "open_questions"}
+        for component, ids in story.component_insight_ids.items():
+            if component not in components:
+                raise ValueError(f"Unknown story component: {component}")
+            for insight_id in ids:
+                if insight_id not in insight_ids:
+                    raise ValueError(f"Unknown insight: {insight_id}")
+        for component, ids in story.component_scene_ids.items():
+            if component not in components:
+                raise ValueError(f"Unknown story component: {component}")
+            for scene_id in ids:
+                if scene_id not in scene_ids:
+                    raise ValueError(f"Unknown scene: {scene_id}")
+        evidence_ids = {item.id for item in project.analysis.evidence}
+        all_story_evidence = (
+            story.hook_evidence_ids + story.context_evidence_ids +
+            story.conflict_evidence_ids + story.consequences_evidence_ids +
+            story.significance_evidence_ids + story.central_question_evidence_ids +
+            story.interpretation_evidence_ids +
+            [x for group in story.timeline_evidence_ids for x in group] +
+            [x for group in story.key_event_evidence_ids for x in group] +
+            [x for group in story.people_evidence_ids for x in group] +
+            [x for group in story.counterpoint_evidence_ids for x in group] +
+            [x for group in story.open_question_evidence_ids for x in group]
+        )
+        unknown = [item for item in all_story_evidence if item not in evidence_ids]
+        if unknown:
+            raise ValueError(f"Unknown evidence: {unknown[0]}")
+        project.analysis.story = story
+        project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
+        project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
+        project.renders = []
+        project.status = "review"
         project.error = None
         return self.save(project)
 
