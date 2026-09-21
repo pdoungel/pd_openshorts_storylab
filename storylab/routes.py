@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from .models import StoryProjectCreate, StoryBrief
+from .models import StoryProjectCreate, StoryBrief, StoryBuilder
 from .service import store
 
 router = APIRouter(prefix="/api/storylab", tags=["storylab"])
@@ -102,6 +102,11 @@ async def search_scenes(project_id: str, payload: SceneRequest):
 @router.post("/projects/{project_id}/scenes/extract")
 async def extract_scenes(project_id: str, payload: SceneRequest):
     return _project_or_404(lambda: store.extract_scenes(project_id, payload.scene_ids))
+
+
+@router.post("/projects/{project_id}/story")
+async def update_story(project_id: str, payload: StoryBuilder):
+    return _project_or_404(lambda: store.update_story(project_id, payload))
 
 
 @router.post("/projects/{project_id}/review")
