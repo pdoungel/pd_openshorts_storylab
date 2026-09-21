@@ -107,6 +107,9 @@ class StoryBuilder(BaseModel):
     interpretation_evidence_ids: list[str] = Field(default_factory=list)
     counterpoint_evidence_ids: list[list[str]] = Field(default_factory=list)
     open_question_evidence_ids: list[list[str]] = Field(default_factory=list)
+    # Review graph: story component -> insights -> scenes. Keys use stable component names.
+    component_insight_ids: dict[str, list[str]] = Field(default_factory=dict)
+    component_scene_ids: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class VisualResearchItem(BaseModel):
