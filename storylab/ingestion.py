@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import mimetypes
 import re
@@ -48,6 +49,28 @@ def _ffprobe_duration(path: Path) -> float | None:
         return max(0.0, float(json.loads(result.stdout)["format"]["duration"]))
     except (FileNotFoundError, subprocess.SubprocessError, KeyError, ValueError, json.JSONDecodeError):
         return None
+
+
+def _clean_subtitle_text(value: str) -> str:
+    """Normalize subtitle markup so HTML/ASS-style tags never reach Story Lab."""
+    value = html.unescape(value or "")
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\\{\\[^}]+\\}", "", value)
+    value = re.sub(r"\\s+", " ", value).strip()
+    return value
+
+
+def _is_lyric_like(text: str) -> bool:
+    """Reject common karaoke/lyrics cues, matching the Shorts subtitle safeguard."""
+    tokens = text.split()
+    if len(tokens) >= 10:
+        single_char_tokens = sum(1 for token in tokens if len(re.sub(r"[^A-Za-z]", "", token)) <= 1)
+        if single_char_tokens / len(tokens) >= 0.70:
+            return True
+    # Repeated musical-note/lyric markers are rarely useful story evidence.
+    if re.search(r"(?:♪|♫|♬|🎵|🎶)", text) and len(tokens) <= 20:
+        return True
+    return False
 
 
 def _seconds(value: str) -> float:
@@ -101,8 +124,8 @@ def _timed_segments(text: str, source_id: str) -> list[TranscriptSegment]:
         re.S,
     )
     for match in pattern.finditer(text):
-        words = " ".join(match.group(3).split())
-        if not words:
+        words = _clean_subtitle_text(match.group(3))
+        if not words or _is_lyric_like(words):
             continue
         try:
             start = _seconds(match.group(1))
@@ -183,6 +206,7 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
     if kind in {"text", "transcript"}:
         text = path.read_text(encoding="utf-8", errors="replace")
         segments = _timed_segments(text, source_id) if kind == "transcript" else []
+        ingestion_source = "uploaded_transcript" if kind == "transcript" else "uploaded_text"
         if not segments:
             segments = _plain_segments(text, source_id)
     elif kind == "pdf":
@@ -194,16 +218,20 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
         pages = [(number, page.extract_text() or "") for number, page in enumerate(reader.pages, 1)]
         text = "\n\n".join(page for _, page in pages)
         segments = [segment for number, page in pages for segment in _plain_segments(page, source_id, number)]
+        ingestion_source = "uploaded_pdf"
     else:
         duration = _ffprobe_duration(path)
+        ingestion_source = "uploaded_media"
         embedded = _embedded_english_subtitles(path, source_id)
         if embedded:
             text, segments = embedded
+            ingestion_source = "embedded_english_subtitles"
         elif transcribe:
             import transcribe_backends
             transcript = transcribe_backends.transcribe_media_local(str(path))
             text = transcript.get("text", "")
             segments = []
+            ingestion_source = "local_asr"
             for row in transcript.get("segments", []):
                 if not row.get("text") or row.get("start") is None or row.get("end") is None:
                     continue
@@ -215,4 +243,4 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
                     continue
     return SourceLocator(id=source_id, name=source_name or path.name, kind=kind, path=str(path.resolve()),
                          mime_type=mimetypes.guess_type(path.name)[0], page_count=page_count, duration=duration,
-                         text=text, segments=segments, checksum=_hash(path), created_at=_stamp())
+                         text=text, segments=segments, checksum=_hash(path), ingestion_source=ingestion_source, created_at=_stamp())
