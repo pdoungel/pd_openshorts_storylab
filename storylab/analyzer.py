@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+import html
+import re
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -55,6 +57,18 @@ class _LLMAnalysis(BaseModel):
     theories: list[_LLMTheory] = Field(default_factory=list)
 
 
+
+
+def _clean_generated_text(value: str) -> str:
+    """Keep model-generated Story Lab copy as plain, clean English text."""
+    value = html.unescape(value or "")
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\\{[^}]+\\}", "", value)
+    return re.sub(r"\\s+", " ", value).strip()
+
+
+def _clean_generated_list(values: list[str]) -> list[str]:
+    return [_clean_generated_text(value) for value in values if _clean_generated_text(value)]
 
 
 def _insight_map(insights: list[Insight]) -> dict[str, list[str]]:
@@ -158,7 +172,7 @@ LANGUAGE REQUIREMENT:
 SOURCE EXCERPTS:
 {citations}
 
-Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every insight and theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts."""
+Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every insight and theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts. Ignore song lyrics, karaoke/opening/ending lyrics, music-only subtitle cues, and repeated lyric lines; use dialogue and story-relevant narration instead."""
 
         data, _ = llm_backend.generate_json(prompt, _LLMAnalysis)
         parsed = _LLMAnalysis.model_validate(data)
@@ -166,10 +180,10 @@ Return JSON matching the schema. Every story component must cite supplied excerp
         valid = lambda indexes: [evidence[i].id for i in indexes if 0 <= i < len(evidence)]
         insights = [Insight(id=f"in_{uuid.uuid4().hex[:10]}",
                            type=item.type if item.type in allowed_insight_types else "fact",
-                           title=item.title, text=item.text,
+                           title=_clean_generated_text(item.title), text=_clean_generated_text(item.text),
                            evidence_ids=valid(item.evidence_indexes),
                            confidence=max(0, min(1, item.confidence))) for item in parsed.insights]
-        theories = [Theory(id=f"th_{uuid.uuid4().hex[:10]}", title=item.title, claim=item.claim,
+        theories = [Theory(id=f"th_{uuid.uuid4().hex[:10]}", title=_clean_generated_text(item.title), claim=_clean_generated_text(item.claim),
                            evidence_ids=valid(item.evidence_indexes),
                            confidence=max(0, min(1, item.confidence))) for item in parsed.theories]
         # Insights are the research layer that actively feeds the reusable story outline.
@@ -179,18 +193,18 @@ Return JSON matching the schema. Every story component must cite supplied excerp
         questions = [i for i in insights if i.type == "question"]
         grouped_valid = lambda groups: [valid(group) for group in groups]
         story = StoryBuilder(
-            hook=parsed.hook or (facts[0].text if facts else ""),
-            context=parsed.context or " ".join(i.text for i in facts[:3]),
-            timeline=parsed.timeline or [i.text for i in facts[:5]],
-            key_events=parsed.key_events or [i.text for i in insights if i.type == "event"][:5],
-            people=parsed.people or [i.text for i in insights if i.type in {"character", "relationship"}][:5],
-            conflict=parsed.conflict or (counterpoints[0].text if counterpoints else ""),
-            consequences=parsed.consequences or (facts[-1].text if facts else ""),
-            significance=parsed.significance or " ".join(i.text for i in interpretations[:2]),
-            central_question=parsed.central_question or (questions[0].text if questions else question),
-            interpretation=parsed.interpretation or " ".join(i.text for i in interpretations[:3]),
-            counterpoints=parsed.counterpoints or [i.text for i in counterpoints[:5]],
-            open_questions=parsed.open_questions or [i.text for i in questions[:5]],
+            hook=_clean_generated_text(parsed.hook or (facts[0].text if facts else "")),
+            context=_clean_generated_text(parsed.context or " ".join(i.text for i in facts[:3])),
+            timeline=_clean_generated_list(parsed.timeline or [i.text for i in facts[:5]]),
+            key_events=_clean_generated_list(parsed.key_events or [i.text for i in insights if i.type == "event"][:5]),
+            people=_clean_generated_list(parsed.people or [i.text for i in insights if i.type in {"character", "relationship"}][:5]),
+            conflict=_clean_generated_text(parsed.conflict or (counterpoints[0].text if counterpoints else "")),
+            consequences=_clean_generated_text(parsed.consequences or (facts[-1].text if facts else "")),
+            significance=_clean_generated_text(parsed.significance or " ".join(i.text for i in interpretations[:2])),
+            central_question=_clean_generated_text(parsed.central_question or (questions[0].text if questions else question)),
+            interpretation=_clean_generated_text(parsed.interpretation or " ".join(i.text for i in interpretations[:3])),
+            counterpoints=_clean_generated_list(parsed.counterpoints or [i.text for i in counterpoints[:5]]),
+            open_questions=_clean_generated_list(parsed.open_questions or [i.text for i in questions[:5]]),
             hook_evidence_ids=valid(parsed.hook_evidence_indexes) or (facts[0].evidence_ids if facts else []),
             context_evidence_ids=valid(parsed.context_evidence_indexes) or [eid for i in facts[:3] for eid in i.evidence_ids],
             timeline_evidence_ids=grouped_valid(parsed.timeline_evidence_indexes) or [i.evidence_ids for i in facts[:5]],
@@ -205,7 +219,7 @@ Return JSON matching the schema. Every story component must cite supplied excerp
             open_question_evidence_ids=grouped_valid(parsed.open_question_evidence_indexes) or [i.evidence_ids for i in questions[:5]],
             component_insight_ids=_insight_map(insights),
         )
-        return StoryAnalysis(summary=parsed.summary, themes=parsed.themes, characters=parsed.characters, evidence=evidence, insights=insights, theories=theories,
+        return StoryAnalysis(summary=_clean_generated_text(parsed.summary), themes=_clean_generated_list(parsed.themes), characters=_clean_generated_list(parsed.characters), evidence=evidence, insights=insights, theories=theories,
                              story=story)
     except Exception:
         return _fallback_analysis(title, material, evidence)
