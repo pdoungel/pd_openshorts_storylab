@@ -304,9 +304,43 @@ know:
 
 ## Story Lab: local search without Ollama
 
-Story Lab can search timestamped source material without Ollama, a cloud embedding API, or a downloaded embedding model. It uses a small deterministic local vectorizer over word and character features and combines that signal with exact lexical overlap and evidence confidence. Search modes are **Hybrid local**, **Vector only**, and **Exact words**.
+Story Lab works without Ollama, a cloud embedding API, or a downloaded embedding model. By default it uses a deterministic local vectorizer over word and character features and combines that signal with exact lexical overlap and evidence confidence.
 
-This keeps the Story Lab evidence → scene → clip workflow available on a storage-constrained machine. A pretrained embedding provider can be added later without changing the provenance model.
+For stronger semantic matching, Story Lab also has an **optional pretrained local embedding provider**. It is not part of the main requirements and is never downloaded automatically by the default configuration.
+
+### Optional pretrained embeddings
+
+The safe default is:
+
+```bash
+STORYLAB_EMBEDDING_PROVIDER=local
+```
+
+If you already have a pretrained Sentence Transformers model cached locally, you can let Story Lab use it without downloading a model:
+
+```bash
+STORYLAB_EMBEDDING_PROVIDER=auto
+STORYLAB_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+```
+
+For an explicit first-time model download, install the optional package and select the provider:
+
+```bash
+pip install sentence-transformers
+export STORYLAB_EMBEDDING_PROVIDER=sentence-transformers
+export STORYLAB_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+```
+
+The default model is **all-MiniLM-L6-v2**, a compact sentence embedding model. The model files are still additional disk usage, so on a storage-constrained machine keep the dependency-free provider unless you specifically need deeper semantic/synonym matching.
+
+Provider behavior:
+
+- **local** — zero extra packages, zero model download; always available.
+- **auto** — uses the pretrained model only when it is already cached; otherwise falls back to local.
+- **sentence-transformers** — enables the pretrained backend and may download the configured model on first use; if the optional backend cannot load, Story Lab falls back to local.
+- Search provenance records whether a scene came from the pretrained provider or the local fallback.
+
+This keeps the evidence → scene → clip workflow independent of Ollama. A pretrained model is an upgrade, not a requirement.
 
 ## Technical Pipeline
 
