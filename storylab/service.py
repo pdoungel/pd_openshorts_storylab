@@ -437,9 +437,16 @@ class StoryLabStore:
         artifact = RenderArtifact(id=f"rd_{uuid.uuid4().hex[:12]}", status="rendering", created_at=datetime.now(timezone.utc).isoformat())
         project.renders.append(artifact); self.save(project)
         try:
+            project = self._prepare_script_scenes(project_id)
             result = render_documentary(project, self.root / "renders" / project.id)
+            if not result.output_path:
+                raise ValueError("Renderer produced no video because no selected source clips were available.")
             project.youtube = build_youtube_package(project)
             artifact.status = "rendered"; artifact.output_path = result.output_path; artifact.manifest_path = result.manifest_path
+            if project.voiceover and project.voiceover.status == "generated" and project.voiceover.audio_path:
+                voiced_video = Path(result.output_path).with_name("storylab-final-voiceover.mp4")
+                mux_narration(result.output_path, project.voiceover.audio_path, str(voiced_video))
+                artifact.output_path = str(voiced_video)
             project.status = "rendered"; project.error = None
         except Exception as exc:
             artifact.status = "error"; artifact.error = str(exc); project.status = "error"; project.error = str(exc)
