@@ -17,12 +17,14 @@ def _visuals(evidence: list[Evidence]) -> list[VisualSuggestion]:
     return [VisualSuggestion(description="Create an explanatory diagram or abstract transition; do not present it as source footage.", material_type="generated")]
 
 
-def _section(heading: str, narration: str, evidence: list[Evidence]) -> ScriptSection:
+def _section(heading: str, narration: str, evidence: list[Evidence], insights=None) -> ScriptSection:
     visuals = _visuals(evidence)
     research = [VisualResearchItem(id=f"vr_{uuid.uuid4().hex[:10]}", description=v.description, material_type=v.material_type, evidence_ids=v.evidence_ids, status="planned", notes=v.notes) for v in visuals]
+    insights = insights or []
     return ScriptSection(
         id=f"sc_{uuid.uuid4().hex[:10]}", heading=heading, narration=narration,
-        evidence_ids=[item.id for item in evidence], visual_suggestions=visuals, visual_research=research,
+        evidence_ids=[item.id for item in evidence],
+        insight_ids=[item.id for item in insights], visual_suggestions=visuals, visual_research=research,
         source_pages=sorted({item.page for item in evidence if item.page}),
         source_timestamps=[(item.start, item.end) for item in evidence if item.start is not None and item.end is not None],
         duration_seconds=_duration(narration),
@@ -46,7 +48,22 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
     """
     evidence = analysis.evidence
     story = analysis.story
+    insights = analysis.insights
     sections = []
+
+    def select_insights(types=None, limit=4):
+        allowed = set(types or [])
+        rows = [i for i in insights if not allowed or i.type in allowed]
+        rows.sort(key=lambda i: (i.status == "approved", i.confidence), reverse=True)
+        return rows[:limit]
+
+    def drive(narration, ids, types=None):
+        rows = select_insights(types)
+        if rows:
+            insight_text = " ".join(i.text for i in rows)
+            narration = f"{narration.strip()} {insight_text}".strip()
+            ids = list(dict.fromkeys((ids or []) + [eid for i in rows for eid in i.evidence_ids]))
+        return narration, ids, rows
 
     hook_evidence = _evidence_by_ids(analysis, story.hook_evidence_ids) or _fallback_slice(evidence, 0, 2)
     sections.append(_section("Hook", story.hook or analysis.summary[:500], hook_evidence))
@@ -105,8 +122,29 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
 
     for heading, narration, ids in plans:
         if narration:
+            selected_types = {
+                "The question": {"question"},
+                "What the sources establish": {"fact", "event"},
+                "The explanation": {"interpretation", "theory"},
+                "Counterpoints": {"counterpoint"},
+                "Implications": {"theme", "lore"},
+                "What is canon": {"fact", "lore", "event"},
+                "The theory": {"theory", "interpretation"},
+                "Evidence for and against": {"fact", "counterpoint", "theory"},
+                "What remains unknown": {"question"},
+                "Motivation and stakes": {"character", "relationship"},
+                "Turning points": {"event", "fact"},
+                "Relationships": {"relationship", "character"},
+                "Character meaning": {"character", "theme"},
+                "Patterns and meaning": {"theme", "lore", "interpretation"},
+                "Open questions": {"question"},
+                "Possible interpretations": {"interpretation", "theory"},
+                "What remains ambiguous": {"question"},
+                "Meaning / takeaway": {"theme", "interpretation"},
+            }.get(heading, {"fact", "event"})
+            narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
             linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
             if not linked:
                 linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
-            sections.append(_section(heading, narration, linked))
+            sections.append(_section(heading, narration, linked, selected_insights))
     return sections
