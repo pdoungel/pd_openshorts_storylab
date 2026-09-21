@@ -120,7 +120,7 @@ class StoryLabStore:
             project.status = "review"
         return self.save(project)
 
-    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0, max_results: int = 12, search_mode: str = "hybrid") -> StoryProject:
+    def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0, max_results: int = 12, search_mode: str = "hybrid", embedding_provider: str | None = None) -> StoryProject:
         """Find timestamp-backed source moments without requiring Ollama or a cloud API."""
         from .embeddings import rank_texts
 
