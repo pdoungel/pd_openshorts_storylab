@@ -19,8 +19,6 @@ class StoryProjectCreate(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     kind: Literal["movie", "series", "anime", "episode", "documentary", "other"] = "movie"
     brief: StoryBrief = Field(default_factory=StoryBrief)
-    title: str = Field(min_length=1, max_length=240)
-    kind: Literal["movie", "series", "anime", "episode", "documentary", "other"] = "movie"
     source_path: Optional[str] = None
     notes: str = Field(default="", max_length=5000)
 
