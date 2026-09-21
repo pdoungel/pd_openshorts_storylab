@@ -30,18 +30,30 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
     clips, manifest_sections = [], []
     for section in project.script:
         row = {"id": section.id, "heading": section.heading, "narration": section.narration,
-               "duration_seconds": section.duration_seconds, "visuals": [visual.model_dump() for visual in section.visual_suggestions], "visual_research": [item.model_dump() for item in section.visual_research]}
-        for visual in section.visual_suggestions:
-            if visual.material_type != "source_backed":
-                continue
-            for evidence_id in visual.evidence_ids:
-                evidence = next((item for item in project.analysis.evidence if item.id == evidence_id), None) if project.analysis else None
-                source = sources.get(evidence.source_id) if evidence else None
-                if not evidence or not source or source.kind != "video" or not source.path or evidence.start is None or evidence.end is None:
+               "duration_seconds": section.duration_seconds, "scene_ids": list(section.scene_ids),
+               "visuals": [visual.model_dump() for visual in section.visual_suggestions],
+               "visual_research": [item.model_dump() for item in section.visual_research]}
+        linked_scenes = [scene for scene in project.scenes if scene.id in section.scene_ids]
+        for scene in linked_scenes:
+            if scene.output_file and os.path.isfile(scene.output_file):
+                clip = Path(scene.output_file)
+                clips.append(clip)
+                row.setdefault("source_clips", []).append(str(clip))
+                row.setdefault("scene_clips", []).append({"scene_id": scene.id, "path": str(clip)})
+        if not linked_scenes:
+            for visual in section.visual_suggestions:
+                if visual.material_type != "source_backed":
                     continue
-                clip = output_dir / f"{section.id}_{evidence.id}.mp4"
-                extract_scene(source.path, str(clip), evidence.start, evidence.end)
-                clips.append(clip); row.setdefault("source_clips", []).append(str(clip))
+                for evidence_id in visual.evidence_ids:
+                    evidence = next((item for item in project.analysis.evidence if item.id == evidence_id), None) if project.analysis else None
+                    source = sources.get(evidence.source_id) if evidence else None
+                    if not evidence or not source or source.kind != "video" or not source.path or evidence.start is None or evidence.end is None:
+                        continue
+                    clip = output_dir / f"{section.id}_{evidence.id}.mp4"
+                    extract_scene(source.path, str(clip), evidence.start, evidence.end)
+                    clips.append(clip)
+                    row.setdefault("source_clips", []).append(str(clip))
+                    row.setdefault("scene_clips", []).append({"scene_id": next((s.id for s in project.scenes if s.evidence_ids == [evidence.id]), None), "path": str(clip)})
         manifest_sections.append(row)
     manifest = output_dir / "render-manifest.json"
     manifest.write_text(json.dumps({"project_id": project.id, "sections": manifest_sections, "clips": [str(clip) for clip in clips]}, indent=2), encoding="utf-8")
