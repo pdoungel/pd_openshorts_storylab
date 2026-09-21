@@ -320,6 +320,7 @@ def test_analysis_exposes_reviewable_insights(tmp_path):
     insight = project.analysis.insights[0]
     assert insight.evidence_ids
     assert insight.status in {"supported", "unreviewed"}
+    assert project.analysis.story.hook == insight.text
     project = store.review(project.id, "insight", insight.id, "approved")
     assert project.analysis.insights[0].status == "approved"
 
