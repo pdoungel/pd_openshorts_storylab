@@ -113,6 +113,19 @@ class StoryLabStore:
             project.status = "review"
         return self.save(project)
 
+    def review_visual(self, project_id: str, visual_id: str, status: str, note: str = "") -> StoryProject:
+        project = self.get(project_id)
+        if status not in {"planned", "researching", "approved", "rejected"}:
+            raise ValueError("Invalid visual research status")
+        for section in project.script:
+            for visual in section.visual_research:
+                if visual.id == visual_id:
+                    visual.status = status
+                    if note:
+                        visual.notes = note
+                    return self.save(project)
+        raise ValueError("Unknown visual research item")
+
     def render(self, project_id: str) -> StoryProject:
         project = self.get(project_id)
         if not project.script or not all(section.approved for section in project.script):
