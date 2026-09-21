@@ -148,7 +148,10 @@ class StoryLabStore:
             raise ValueError("Search mode must be hybrid, embedding, or lexical.")
 
         wanted = set(evidence_ids or [])
-        query_text = " ".join(filter(None, [query, project.brief.question, project.analysis.story.central_question])).lower().strip()
+        if query.strip():
+            query_text = query.strip().lower()
+        else:
+            query_text = " ".join(filter(None, [project.brief.question, project.analysis.story.central_question])).lower().strip()
         if not query_text and not wanted:
             query_text = project.title.lower().strip()
 
