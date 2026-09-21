@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from .models import Evidence, ScriptSection, StoryAnalysis, VisualSuggestion
+from .models import Evidence, ScriptSection, StoryAnalysis, VisualSuggestion, VisualResearchItem
 
 
 def _duration(text: str) -> float:
@@ -18,9 +18,11 @@ def _visuals(evidence: list[Evidence]) -> list[VisualSuggestion]:
 
 
 def _section(heading: str, narration: str, evidence: list[Evidence]) -> ScriptSection:
+    visuals = _visuals(evidence)
+    research = [VisualResearchItem(id=f"vr_{uuid.uuid4().hex[:10]}", description=v.description, material_type=v.material_type, evidence_ids=v.evidence_ids, status="planned", notes=v.notes) for v in visuals]
     return ScriptSection(
         id=f"sc_{uuid.uuid4().hex[:10]}", heading=heading, narration=narration,
-        evidence_ids=[item.id for item in evidence], visual_suggestions=_visuals(evidence),
+        evidence_ids=[item.id for item in evidence], visual_suggestions=visuals, visual_research=research,
         source_pages=sorted({item.page for item in evidence if item.page}),
         source_timestamps=[(item.start, item.end) for item in evidence if item.start is not None and item.end is not None],
         duration_seconds=_duration(narration),
