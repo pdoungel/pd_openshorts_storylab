@@ -157,6 +157,8 @@ class Scene(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     source_file: Optional[str] = None
     output_file: Optional[str] = None
+    relevance: float = Field(default=1.0, ge=0, le=1)
+    extraction_status: Literal["candidate", "extracted", "error"] = "candidate"
 
 
 class StoryAnalysis(BaseModel):
