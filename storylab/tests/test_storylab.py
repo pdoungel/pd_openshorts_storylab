@@ -165,6 +165,8 @@ def test_timed_scene_is_linked_back_to_matching_script_section(tmp_path):
     source = tmp_path/"film.srt"
     source.write_text("1\\n00:00:10,000 --> 00:00:12,500\\nA key reveal happens.\\n", encoding="utf-8")
     project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.save(project)
     project = store.analyze(project.id)
     scene = project.scenes[0]
     linked_sections = [section for section in project.script if scene.id in section.scene_ids]
@@ -178,6 +180,8 @@ def test_link_scenes_to_script_is_idempotent(tmp_path):
     source = tmp_path/"film.srt"
     source.write_text("1\\n00:00:10,000 --> 00:00:12,500\\nA key reveal happens.\\n", encoding="utf-8")
     project = store.ingest(project.id, str(source))
+    project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.save(project)
     project = store.analyze(project.id)
     before = [list(section.scene_ids) for section in project.script]
     project = store.link_scenes_to_script(project.id)
@@ -209,6 +213,7 @@ def test_scene_search_is_idempotent_for_same_query(tmp_path):
     source.write_text("1\n00:00:10,000 --> 00:00:12,000\nThe reason is explained here.\n", encoding="utf-8")
     project = store.ingest(project.id, str(source))
     project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.save(project)
     project = store.analyze(project.id)
     count = len(project.scenes)
     project = store.search_scenes(project.id, query="reason", context_seconds=1)
