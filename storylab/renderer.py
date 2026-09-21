@@ -34,7 +34,14 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
                "duration_seconds": section.duration_seconds, "scene_ids": list(section.scene_ids),
                "visuals": [visual.model_dump() for visual in section.visual_suggestions],
                "visual_research": [item.model_dump() for item in section.visual_research]}
-        linked_scenes = [scene for scene in project.scenes if scene.id in section.scene_ids]
+        # Preserve editorial order: script section order first, then the exact
+        # scene_ids order chosen by the story/script graph. Only selected scenes
+        # participate in the final assembly.
+        linked_scenes = [
+            scene for scene_id in section.scene_ids
+            for scene in project.scenes
+            if scene.id == scene_id and scene.selected
+        ]
         linked_clip_count = 0
         for scene in linked_scenes:
             clip = None
@@ -69,7 +76,13 @@ def render_documentary(project: StoryProject, output_dir: str | Path) -> RenderR
                     row.setdefault("scene_clips", []).append({"scene_id": next((s.id for s in project.scenes if s.evidence_ids == [evidence.id]), None), "path": str(clip)})
         manifest_sections.append(row)
     manifest = output_dir / "render-manifest.json"
-    manifest.write_text(json.dumps({"project_id": project.id, "sections": manifest_sections, "clips": [str(clip) for clip in clips]}, indent=2), encoding="utf-8")
+    manifest.write_text(json.dumps({
+        "project_id": project.id,
+        "sections": manifest_sections,
+        "clips": [str(clip) for clip in clips],
+        "assembly_order": [str(clip) for clip in clips],
+        "selected_scene_ids": [scene.id for section in project.script for scene in project.scenes if scene.id in section.scene_ids and scene.selected],
+    }, indent=2), encoding="utf-8")
     if not clips:
         return RenderResult(None, str(manifest))
     output = output_dir / "documentary-source-assembly.mp4"
