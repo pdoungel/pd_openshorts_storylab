@@ -104,10 +104,18 @@ def ingest_file(path: str | Path, *, source_name: str | None = None, transcribe:
         duration = _ffprobe_duration(path)
         if transcribe:
             import transcribe_backends
-            transcript = transcribe_backends.transcribe_media(str(path))
+            transcript = transcribe_backends.transcribe_media_local(str(path))
             text = transcript.get("text", "")
-            segments = [TranscriptSegment(text=row["text"].strip(), start=float(row["start"]), end=float(row["end"]), source_id=source_id)
-                        for row in transcript.get("segments", []) if row.get("text")]
+            segments = []
+            for row in transcript.get("segments", []):
+                if not row.get("text") or row.get("start") is None or row.get("end") is None:
+                    continue
+                try:
+                    start = max(0.0, float(row["start"]))
+                    end = max(start + 0.05, float(row["end"]))
+                    segments.append(TranscriptSegment(text=row["text"].strip(), start=start, end=end, source_id=source_id))
+                except (TypeError, ValueError):
+                    continue
     return SourceLocator(id=source_id, name=source_name or path.name, kind=kind, path=str(path.resolve()),
                          mime_type=mimetypes.guess_type(path.name)[0], page_count=page_count, duration=duration,
                          text=text, segments=segments, checksum=_hash(path), created_at=_stamp())
