@@ -168,6 +168,8 @@ def test_timed_scene_is_linked_back_to_matching_script_section(tmp_path):
     project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
     project = store.save(project)
     project = store.analyze(project.id)
+    project = store.search_scenes(project.id, query="key reveal", context_seconds=0)
+    project = store.link_scenes_to_script(project.id)
     scene = project.scenes[0]
     linked_sections = [section for section in project.script if scene.id in section.scene_ids]
     assert linked_sections
@@ -250,6 +252,7 @@ def test_scene_search_supports_local_vector_mode_without_ollama(tmp_path):
     )
     project = store.ingest(project.id, str(source))
     project.sources[0] = project.sources[0].model_copy(update={"kind": "video"})
+    project = store.save(project)
     project = store.analyze(project.id)
     project.scenes = []
     project = store.search_scenes(
