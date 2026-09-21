@@ -29,6 +29,7 @@ class SceneRequest(BaseModel):
     context_seconds: float = Field(default=3.0, ge=0, le=30)
     max_results: int = Field(default=12, ge=1, le=40)
     search_mode: str = Field(default="hybrid", pattern="^(hybrid|embedding|lexical)$")
+    embedding_provider: str = Field(default="local", pattern="^(local|auto|sentence-transformers)$")
 
 
 class ReviewRequest(BaseModel):
@@ -95,7 +96,7 @@ async def analyze_project(project_id: str, payload: AnalyzeRequest):
 
 @router.post("/projects/{project_id}/scenes/search")
 async def search_scenes(project_id: str, payload: SceneRequest):
-    return _project_or_404(lambda: store.search_scenes(project_id, payload.evidence_ids, payload.query, payload.context_seconds, payload.max_results, payload.search_mode))
+    return _project_or_404(lambda: store.search_scenes(project_id, payload.evidence_ids, payload.query, payload.context_seconds, payload.max_results, payload.search_mode, payload.embedding_provider))
 
 
 @router.post("/projects/{project_id}/scenes/extract")
