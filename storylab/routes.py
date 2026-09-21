@@ -32,6 +32,23 @@ class SceneRequest(BaseModel):
     embedding_provider: str = Field(default="local", pattern="^(local|auto|sentence-transformers)$")
 
 
+class SceneSelectionRequest(BaseModel):
+    scene_ids: list[str] = Field(default_factory=list)
+
+
+class YouTubePackageRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=5000)
+    tags: list[str] | None = None
+    category_id: str | None = Field(default=None, max_length=10)
+    language: str | None = Field(default=None, max_length=20)
+    privacy_status: str | None = Field(default=None, pattern="^(private|unlisted|public)$")
+    made_for_kids: bool | None = None
+    contains_synthetic_media: bool | None = None
+    thumbnail_path: str | None = None
+    publish_at: str | None = None
+
+
 class ReviewRequest(BaseModel):
     target_type: str
     target_id: str
@@ -102,6 +119,23 @@ async def search_scenes(project_id: str, payload: SceneRequest):
 @router.post("/projects/{project_id}/scenes/extract")
 async def extract_scenes(project_id: str, payload: SceneRequest):
     return _project_or_404(lambda: store.extract_scenes(project_id, payload.scene_ids))
+
+
+@router.post("/projects/{project_id}/scenes/select")
+async def select_scenes(project_id: str, payload: SceneSelectionRequest):
+    return _project_or_404(lambda: store.select_scenes(project_id, payload.scene_ids))
+
+
+@router.post("/projects/{project_id}/youtube")
+async def update_youtube_package(project_id: str, payload: YouTubePackageRequest):
+    from .youtube import build_youtube_package
+    def action():
+        project = store.get(project_id)
+        package = project.youtube or build_youtube_package(project)
+        updates = payload.model_dump(exclude_none=True)
+        project.youtube = package.model_copy(update=updates)
+        return store.save(project)
+    return _project_or_404(action)
 
 
 @router.post("/projects/{project_id}/story")
