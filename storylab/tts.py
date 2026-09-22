@@ -194,12 +194,60 @@ def narration_srt(project: StoryProject) -> str:
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
     rows = []
+    segments = {segment.section_id: segment for segment in (project.voiceover.segments if project.voiceover else [])}
     cursor = 0.0
     for index, section in enumerate(project.script, start=1):
-        duration = max(1.0, float(section.duration_seconds or 1.0))
-        rows.append(f"{index}\n{stamp(cursor)} --> {stamp(cursor + duration)}\n{section.narration.strip()}\n")
-        cursor += duration
-    return "\n".join(rows)
+        segment = segments.get(section.id)
+        if segment:
+            start, end = float(segment.start_seconds), float(segment.end_seconds)
+        else:
+            duration = max(1.0, float(section.duration_seconds or 1.0))
+            start, end = cursor, cursor + duration
+            cursor = end
+        rows.append(f"{index}\\n{stamp(start)} --> {stamp(end)}\\n{section.narration.strip()}\\n")
+    return "\\n".join(rows)
+
+def _visual_section_starts(project: StoryProject) -> dict[str, float]:
+    """Map each script section to its position in the final selected-clip timeline."""
+    starts = {}
+    cursor = 0.0
+    seen_source_clips = set()
+    scenes = {scene.id: scene for scene in project.scenes}
+    for section in project.script:
+        starts[section.id] = round(cursor, 3)
+        for scene_id in section.scene_ids:
+            scene = scenes.get(scene_id)
+            if not scene or not scene.selected:
+                continue
+            source_key = scene.output_file or scene.id
+            if source_key in seen_source_clips:
+                continue
+            seen_source_clips.add(source_key)
+            cursor += max(0.0, float(scene.end) - float(scene.start))
+    return starts
+
+
+def _mix_audio_timeline(segments: list[VoiceoverSegment], output: Path) -> None:
+    """Place each generated Voicebox segment at its final-video timeline position."""
+    if not segments:
+        raise VoiceboxError("Voicebox generated no narration segments.")
+    inputs = []
+    filters = []
+    labels = []
+    for index, segment in enumerate(segments):
+        if not segment.audio_path or not Path(segment.audio_path).is_file():
+            raise VoiceboxError(f"Narration audio is missing for section {segment.section_id}.")
+        inputs.extend(["-i", segment.audio_path])
+        delay_ms = max(0, int(round(segment.start_seconds * 1000)))
+        label = f"d{index}"
+        filters.append(f"[{index}:a]adelay={delay_ms}|{delay_ms}:all=1[{label}]")
+        labels.append(f"[{label}]")
+    filters.append(f"{''.join(labels)}amix=inputs={len(segments)}:duration=longest:dropout_transition=0[mix]")
+    subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
+         "-map", "[mix]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(output)],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
+    )
 
 
 def _audio_duration(path: Path) -> float:
@@ -234,7 +282,7 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
     section_dir.mkdir(parents=True, exist_ok=True)
     generated = []
     segments: list[VoiceoverSegment] = []
-    cursor = 0.0
+    section_starts = _visual_section_starts(project)
 
     for index, section in enumerate(project.script):
         if not section.narration.strip():
@@ -260,16 +308,16 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
             duration = _audio_duration(section_path)
         duration = round(duration, 3)
         section.duration_seconds = duration
+        start_seconds = section_starts.get(section.id, 0.0)
         segments.append(VoiceoverSegment(
             section_id=section.id,
             generation_id=str(generation_id),
-            start_seconds=round(cursor, 3),
-            end_seconds=round(cursor + duration, 3),
+            start_seconds=round(start_seconds, 3),
+            end_seconds=round(start_seconds + duration, 3),
             audio_path=str(section_path),
             text=section.narration.strip(),
         ))
         generated.append(section_path)
-        cursor += duration
 
     if not generated:
         raise VoiceboxError("Voicebox generated no narration audio.")
@@ -284,5 +332,5 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
     )
 
     audio_path = output_dir / "narration.wav"
-    _concat_audio(generated, audio_path)
+    _mix_audio_timeline(segments, audio_path)
     return str(script_path), str(srt_path), str(audio_path), segments
