@@ -89,6 +89,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   const [voiceboxAvailable, setVoiceboxAvailable] = useState(false);
   const [voiceboxLoading, setVoiceboxLoading] = useState(false);
   const [voiceProfileId, setVoiceProfileId] = useState('');
+  const [buildStage, setBuildStage] = useState('storyline');
 
   const replaceProject = (project) => {
     setSelected(project);
@@ -99,6 +100,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     setSelected(project);
     setAngle(project.brief?.angle || 'story');
     setQuestion(project.brief?.question || '');
+    setBuildStage(project.scenes?.some(scene => scene.extraction_status === 'extracted') ? 'select' : 'storyline');
     setWorkflowStep(project.status === 'error' ? 'sources' : (project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources'));
   };
 
@@ -271,6 +273,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         body: JSON.stringify({ transcript: '' })
       });
       replaceProject(project);
+      setBuildStage('evidence');
       setWorkflowStep('build');
     } catch (e) {
       setError(e.message || 'Could not build the story.');
@@ -375,17 +378,27 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   const extractScenes = async (sceneIds) => {
     if (!selected || !sceneIds?.length) return;
     setLoading(true);
+    setBusyLabel('Extracting source clips from the main video…');
     setError('');
     try {
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/extract', {
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/scenes/extract', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({scene_ids: sceneIds})
-      }));
+      });
+      replaceProject(project);
+      const failed = (project.scenes || []).filter(scene => sceneIds.includes(scene.id) && scene.extraction_status === 'error');
+      if (failed.length) {
+        setError('Some source clips could not be extracted: ' + failed.slice(0, 5).map(scene => scene.extraction_error || scene.title).join('; '));
+        setBuildStage('clips');
+      } else {
+        setBuildStage('select');
+      }
     } catch (e) {
       setError(e.message || 'Could not extract source clips.');
     } finally {
       setLoading(false);
+      setBusyLabel('');
     }
   };
 
@@ -405,8 +418,8 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   };
 
   const allScriptApproved = Boolean(selected?.script?.length && selected.script.every(section => section.approved));
-  const selectedClips = (selected?.scenes || []).filter(scene => scene.selected !== false);
-  const extractedClips = selectedClips.filter(scene => scene.extraction_status === 'extracted' && scene.output_file);
+  const selectedClips = (selected?.scenes || []).filter(scene => scene.selected === true);
+  const extractedClips = (selected?.scenes || []).filter(scene => scene.extraction_status === 'extracted' && scene.output_file);
 
   const evidenceById = (ids = []) => {
     const lookup = Object.fromEntries((selected?.analysis?.evidence || []).map(item => [item.id, item]));
@@ -826,188 +839,260 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
               {workflowStep === 'build' && selected.script?.length > 0 && (
                 <div className="space-y-6">
                   <div className="rounded-input border border-brass/40 bg-paper3 p-4">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-                      <div>
-                        <div className="readout text-brass">STEP 3 · BUILD STORY</div>
-                        <h3 className="font-display lowercase text-2xl text-ink mt-1">
-                          {selected.brief?.question || selected.analysis?.story?.central_question || selected.title}
-                        </h3>
-                        <p className="text-xs text-muted mt-2">
-                          Every section below keeps the narration, evidence and actual source footage together.
-                          Select only the clips you want in the final documentary.
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-[10px]">
-                        <span className="rounded-full border border-rule px-2 py-1">{selected.script.length} sections</span>
-                        <span className="rounded-full border border-rule px-2 py-1">{selectedClips.length} clips selected</span>
-                        <span className="rounded-full border border-rule px-2 py-1">{extractedClips.length} clips ready</span>
-                      </div>
-                    </div>
+                    <div className="readout text-brass">STEP 3 · BUILD STORY</div>
+                    <h3 className="font-display lowercase text-2xl text-ink mt-1">
+                      {selected.brief?.question || selected.analysis?.story?.central_question || selected.title}
+                    </h3>
+                    <p className="text-xs text-muted mt-2 max-w-3xl">
+                      Review the refined storyline first. Then review all supporting evidence in the
+                      order it occurs in the original source. Only after that will Story Lab extract
+                      the exact timestamped moments from the main video for you to select.
+                    </p>
                   </div>
 
-                  {selected.script.map((section, index) => {
-                    const evidence = evidenceById(section.evidence_ids || []);
-                    const scenes = scenesForSection(section);
-                    return (
-                      <div key={section.id} className="rounded-input border border-rule overflow-hidden">
-                        <div className="bg-paper3 p-4 border-b border-rule">
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      ['storyline', '3.1', 'Storyline'],
+                      ['evidence', '3.2', 'Evidence timeline'],
+                      ['clips', '3.3', 'Extract source clips'],
+                      ['select', '3.4', 'Select clips'],
+                    ].map(([id, number, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => {
+                          if (id === 'clips' && !(selected.scenes || []).length) return;
+                          if (id === 'select' && !(selected.scenes || []).some(scene => scene.extraction_status === 'extracted')) return;
+                          setBuildStage(id);
+                        }}
+                        className={`rounded-full border px-3 py-2 text-[10px] transition-colors ${buildStage === id ? 'border-brass bg-paper3 text-ink' : 'border-rule text-muted'}`}
+                      >
+                        <span className="text-brass mr-1">{number}</span>{label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {buildStage === 'storyline' && (
+                    <div className="space-y-4">
+                      <div className="rounded-input border border-rule p-4">
+                        <div className="readout">REFINED STORYLINE</div>
+                        <p className="text-[11px] text-muted mt-2">
+                          The editorial sections are shown here only as narration/story structure.
+                          Supporting evidence is deliberately separated into one chronological timeline below.
+                        </p>
+                      </div>
+                      {selected.script.map((section, index) => (
+                        <div key={section.id} className="rounded-input border border-rule p-4">
                           <div className="flex items-start gap-3">
                             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-paper text-[10px] shrink-0">
                               {String(index + 1).padStart(2, '0')}
                             </div>
                             <div className="min-w-0">
-                              <div className="text-sm font-medium text-ink">{section.heading}</div>
-                              <div className="text-[10px] text-muted mt-1">{section.duration_seconds || '—'}s narration · {evidence.length} evidence item(s) · {scenes.length} source clip(s)</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid xl:grid-cols-2 gap-0">
-                          <div className="p-4 border-b xl:border-b-0 xl:border-r border-rule space-y-4">
-                            <div>
-                              <div className="readout">NARRATION / STORY</div>
+                              <div className="readout">{section.heading}</div>
                               <p className="text-sm text-ink2 mt-2 leading-relaxed">{section.narration}</p>
                             </div>
-
-                            <div>
-                              <div className="readout">EVIDENCE</div>
-                              {evidence.length ? (
-                                <div className="space-y-2 mt-2">
-                                  {evidence.map(item => {
-                                    const evidenceScenes = (selected?.scenes || []).filter(scene => (scene.evidence_ids || []).includes(item.id));
-                                    const evidenceSelected = evidenceScenes.length > 0 && evidenceScenes.every(scene => scene.selected !== false);
-                                    const evidenceReady = evidenceScenes.filter(scene => scene.extraction_status === 'extracted' && scene.output_file).length;
-                                    return (
-                                    <button
-                                      key={item.id}
-                                      type="button"
-                                      disabled={!evidenceScenes.length || loading}
-                                      onClick={() => selectEvidence(item, !evidenceSelected)}
-                                      className={`w-full rounded border p-3 text-left transition-colors ${evidenceSelected ? 'border-brass bg-paper3' : 'border-rule hover:border-brass/60'} ${!evidenceScenes.length ? 'cursor-default' : 'cursor-pointer'}`}
-                                      title={evidenceScenes.length ? (evidenceSelected ? 'Unselect footage for this evidence' : 'Select footage for this evidence') : 'No source clip is linked to this evidence yet'}
-                                    >
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="flex items-start gap-2 min-w-0">
-                                          <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${evidenceSelected ? 'border-brass bg-brass text-white' : 'border-rule'}`}>
-                                            {evidenceSelected && <Check size={10}/>}
-                                          </span>
-                                          <span className="text-xs text-ink">{item.label || 'Source evidence'}</span>
-                                        </div>
-                                        {item.start != null && <span className="text-[10px] text-brass shrink-0">{formatTime(item.start)} — {formatTime(item.end)}</span>}
-                                      </div>
-                                      {item.claim && <p className="text-xs text-ink2 mt-1 ml-6">{item.claim}</p>}
-                                      {item.supporting_text && <p className="text-[10px] text-muted mt-1 ml-6">{item.supporting_text}</p>}
-                                      {evidenceScenes.length > 0 && <p className="text-[9px] text-muted mt-2 ml-6">{evidenceScenes.length} source clip{evidenceScenes.length === 1 ? '' : 's'} · {evidenceReady} playable</p>}
-                                    </button>
-                                    );
-                                  })}
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="text-xs text-ink">{item.label || 'Source evidence'}</div>
-                                        {item.start != null && <span className="text-[10px] text-brass">{formatTime(item.start)} — {formatTime(item.end)}</span>}
-                                      </div>
-                                      {item.claim && <p className="text-xs text-ink2 mt-1">{item.claim}</p>}
-                                      {item.supporting_text && <p className="text-[10px] text-muted mt-1">{item.supporting_text}</p>}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted mt-2">No linked evidence was returned for this section.</p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                <div className="readout">SOURCE VIDEO CLIPS</div>
-                                <p className="text-[10px] text-muted mt-1">Playable footage found from the cited source timestamps.</p>
-                              </div>
-                              <span className="text-[10px] text-muted">{scenes.filter(s => s.selected !== false).length} selected</span>
-                            </div>
-
-                            {scenes.length ? (
-                              <div className="space-y-3">
-                                {scenes.map(scene => {
-                                  const checked = scene.selected !== false;
-                                  const ready = scene.extraction_status === 'extracted' && scene.output_file;
-                                  return (
-                                    <div
-                                      key={scene.id}
-                                      className={`rounded border overflow-hidden transition-colors ${checked ? 'border-brass/60 bg-paper3' : 'border-rule'}`}
-                                    >
-                                      {ready ? (
-                                        <video
-                                          className="w-full aspect-video object-contain bg-black"
-                                          controls
-                                          playsInline
-                                          preload="metadata"
-                                          src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
-                                        />
-                                      ) : (
-                                        <div className="aspect-video bg-paper3 flex flex-col items-center justify-center text-center p-4">
-                                          <PlayCircle size={28} className="text-muted"/>
-                                          <p className="text-xs text-muted mt-2">Clip is not extracted yet.</p>
-                                          {scene.extraction_error && <p className="text-[10px] text-warn mt-1">{scene.extraction_error}</p>}
-                                          <button className="btn-ghost text-[10px] mt-2" onClick={() => extractScenes([scene.id])} disabled={loading}>
-                                            extract clip
-                                          </button>
-                                        </div>
-                                      )}
-
-                                      <div className="bg-paper p-3">
-                                        <button
-                                          type="button"
-                                          disabled={!ready || loading}
-                                          onClick={() => selectScene(scene.id, !checked)}
-                                          className={`flex w-full items-start gap-2 text-left ${ready ? 'cursor-pointer' : 'cursor-default'}`}
-                                          title={ready ? (checked ? 'Unselect this source clip' : 'Select this source clip') : 'Extract this clip before selecting it'}
-                                        >
-                                          <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? 'border-brass bg-brass text-white' : 'border-rule'}`}>
-                                            {checked && <Check size={10}/>}
-                                          </span>
-                                          <span className="min-w-0">
-                                            <span className="block text-xs text-ink">{scene.title}</span>
-                                            <span className="block text-[10px] text-muted mt-1">
-                                              {formatTime(scene.start)} — {formatTime(scene.end)} · {Math.max(0, (scene.end || 0) - (scene.start || 0)).toFixed(1)}s
-                                            </span>
-                                          </span>
-                                        </button>
-                                        {scene.purpose && <p className="text-[10px] text-muted mt-2">{scene.purpose}</p>}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="rounded border border-dashed border-rule p-5 text-center">
-                                <Film size={22} className="mx-auto text-muted"/>
-                                <p className="text-xs text-muted mt-2">No timestamp-backed source clip was found for this section.</p>
-                              </div>
-                            )}
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-input border border-brass/40 bg-paper3 p-4">
-                    <div>
-                      <div className="readout text-brass">CLIP SELECTION</div>
-                      <p className="text-xs text-muted mt-1">
-                        {selectedClips.length} selected · {extractedClips.length} playable.
-                        {selectedClips.length !== extractedClips.length
-                          ? ' Every selected clip must be playable before narration can be prepared.'
-                          : ' Uncheck anything you do not want used.'}
-                      </p>
+                      ))}
+                      <button type="button" className="btn-primary" onClick={() => setBuildStage('evidence')}>
+                        review supporting evidence <ChevronRight size={14}/>
+                      </button>
                     </div>
-                    <button
-                      className="btn-primary"
-                      disabled={!selectedClips.length || selectedClips.length !== extractedClips.length || loading}
-                      onClick={() => setWorkflowStep('narration')}
-                    >
-                      continue to narration <ChevronRight size={14}/>
-                    </button>
-                  </div>
+                  )}
+
+                  {buildStage === 'evidence' && (
+                    <div className="space-y-4">
+                      <div className="rounded-input border border-rule p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="readout">SUPPORTING EVIDENCE · SEQUENTIAL SOURCE ORDER</div>
+                            <p className="text-[11px] text-muted mt-1">
+                              Each timestamp appears once here, sorted by the original video timeline.
+                              This is the evidence-to-footage handoff for the story.
+                            </p>
+                          </div>
+                          <span className="text-[10px] text-muted">
+                            {allEvidence.filter(item => item.start != null && item.end != null).length} timed
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {[
+                          ...new Map(
+                            allEvidence
+                              .filter(item => item.start != null && item.end != null)
+                              .slice()
+                              .sort((a, b) => Number(a.start) - Number(b.start) || Number(a.end) - Number(b.end))
+                              .map(item => [item.id, item])
+                          ).values()
+                        ].map((item, index) => {
+                          const linkedScenes = (selected.scenes || []).filter(scene => (scene.evidence_ids || []).includes(item.id));
+                          return (
+                            <div key={item.id} className="rounded-input border border-rule p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-paper3 border border-rule text-[10px] text-muted shrink-0">
+                                  {String(index + 1).padStart(2, '0')}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="text-xs text-ink">{item.label || 'Source dialogue / narration'}</div>
+                                    <span className="text-[10px] text-brass">{formatTime(item.start)} — {formatTime(item.end)}</span>
+                                  </div>
+                                  {item.claim && <p className="text-xs text-ink2 mt-1">{item.claim}</p>}
+                                  {item.supporting_text && <p className="text-[10px] text-muted mt-1">{item.supporting_text}</p>}
+                                  <div className="text-[9px] text-muted mt-2">
+                                    {linkedScenes.length ? linkedScenes.length + ' extraction candidate' + (linkedScenes.length === 1 ? '' : 's') : 'No source clip candidate linked yet'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <button type="button" className="btn-primary" onClick={() => setBuildStage('clips')}>
+                        continue to clip extraction <ChevronRight size={14}/>
+                      </button>
+                    </div>
+                  )}
+
+                  {buildStage === 'clips' && (
+                    <div className="space-y-4">
+                      <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                        <div className="readout text-brass">3.3 · EXTRACT FROM MAIN SOURCE VIDEO</div>
+                        <h3 className="text-lg text-ink mt-1">Turn timestamps into real playable clips</h3>
+                        <p className="text-xs text-muted mt-2 max-w-3xl">
+                          This step reads the original uploaded video and trims every timestamp-backed
+                          evidence window into a stored MP4. The clips are verified before they become selectable.
+                        </p>
+                      </div>
+
+                      <div className="rounded-input border border-rule p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="readout">SOURCE CLIP CANDIDATES</div>
+                            <p className="text-[10px] text-muted mt-1">
+                              {(selected.scenes || []).length} candidate windows · {(selected.scenes || []).filter(scene => scene.extraction_status === 'extracted').length} extracted
+                            </p>
+                          </div>
+                          <span className="text-[10px] text-muted">Main video → timestamp → stored MP4</span>
+                        </div>
+                        <div className="space-y-2 mt-4">
+                          {(selected.scenes || []).slice().sort((a, b) => Number(a.start) - Number(b.start)).map((scene, index) => (
+                            <div key={scene.id} className="rounded border border-rule p-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                  <div className="text-xs text-ink">{String(index + 1).padStart(2, '0')} · {scene.title}</div>
+                                  <div className="text-[10px] text-brass mt-1">{formatTime(scene.start)} — {formatTime(scene.end)} · {(scene.end - scene.start).toFixed(1)}s</div>
+                                </div>
+                                <span className={`text-[9px] rounded-full border px-2 py-1 ${scene.extraction_status === 'extracted' ? 'border-emerald-500/40 text-emerald-700' : scene.extraction_status === 'error' ? 'border-red-500/40 text-red-700' : 'border-rule text-muted'}`}>
+                                  {scene.extraction_status}
+                                </span>
+                              </div>
+                              {scene.extraction_error && <p className="text-[10px] text-red-700 mt-2">{scene.extraction_error}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={loading || !(selected.scenes || []).length}
+                          onClick={() => extractScenes((selected.scenes || []).map(scene => scene.id))}
+                        >
+                          <Film size={14}/>
+                          {loading && busyLabel === 'Extracting source clips from the main video…' ? 'extracting clips…' : 'extract clips from main source video'}
+                        </button>
+                        {selected.scenes?.some(scene => scene.extraction_status === 'extracted') && (
+                          <button type="button" className="btn-ghost" onClick={() => setBuildStage('select')}>
+                            go to clip selection <ChevronRight size={14}/>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {buildStage === 'select' && (
+                    <div className="space-y-4">
+                      <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                          <div>
+                            <div className="readout text-brass">3.4 · SELECT SOURCE CLIPS</div>
+                            <h3 className="text-lg text-ink mt-1">Choose the actual footage</h3>
+                            <p className="text-xs text-muted mt-2">
+                              Preview every extracted source moment, then select only the clips that belong in the final documentary.
+                            </p>
+                          </div>
+                          <div className="text-[10px] text-muted">{selectedClips.length} selected · {extractedClips.length} playable</div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {(selected.scenes || []).slice().sort((a, b) => Number(a.start) - Number(b.start)).map((scene, index) => {
+                          const checked = scene.selected === true;
+                          const ready = scene.extraction_status === 'extracted' && scene.output_file;
+                          return (
+                            <div key={scene.id} className={`rounded-input border overflow-hidden ${checked ? 'border-brass/60 bg-paper3' : 'border-rule'}`}>
+                              {ready ? (
+                                <video
+                                  className="w-full aspect-video object-contain bg-black"
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
+                                />
+                              ) : (
+                                <div className="p-6 text-center bg-paper3">
+                                  <PlayCircle size={24} className="mx-auto text-muted"/>
+                                  <p className="text-xs text-muted mt-2">This source moment was not extracted successfully.</p>
+                                </div>
+                              )}
+                              <div className="p-4">
+                                <button
+                                  type="button"
+                                  disabled={!ready || loading}
+                                  onClick={() => selectScene(scene.id, !checked)}
+                                  className={`w-full flex items-start gap-3 text-left ${ready ? 'cursor-pointer' : 'cursor-default'}`}
+                                  title={ready ? (checked ? 'Unselect this source clip' : 'Select this source clip') : 'Extract this clip before selecting it'}
+                                >
+                                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${checked ? 'border-brass bg-brass text-white' : 'border-rule'}`}>
+                                    {checked && <Check size={12}/>}
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block text-xs text-ink">{String(index + 1).padStart(2, '0')} · {scene.title}</span>
+                                    <span className="block text-[10px] text-brass mt-1">{formatTime(scene.start)} — {formatTime(scene.end)} · {(scene.end - scene.start).toFixed(1)}s</span>
+                                    {scene.purpose && <span className="block text-[10px] text-muted mt-2">{scene.purpose}</span>}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div>
+                            <div className="readout text-brass">CLIP SELECTION</div>
+                            <p className="text-xs text-muted mt-1">
+                              {selectedClips.length} selected · {extractedClips.length} playable.
+                              {selectedClips.length ? ' Continue only after choosing the footage you actually want.' : ' Select at least one extracted source clip.'}
+                            </p>
+                          </div>
+                          <button
+                            className="btn-primary"
+                            disabled={!selectedClips.length || loading}
+                            onClick={() => setWorkflowStep('narration')}
+                          >
+                            continue to narration <ChevronRight size={14}/>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
