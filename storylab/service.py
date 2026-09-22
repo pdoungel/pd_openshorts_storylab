@@ -437,10 +437,15 @@ class StoryLabStore:
             try:
                 output = output_dir / f"{scene.id}.mp4"
                 extract_scene(scene.source_file, str(output), scene.start, scene.end)
+                if not output.is_file() or output.stat().st_size < 1024:
+                    raise RuntimeError("FFmpeg completed without producing a usable clip.")
                 scene.output_file = str(output)
                 scene.extraction_status = "extracted"
-            except Exception:
+                scene.extraction_error = None
+            except Exception as exc:
+                scene.output_file = None
                 scene.extraction_status = "error"
+                scene.extraction_error = str(exc)[:1000]
         return self.save(project)
 
     def review_visual(self, project_id: str, visual_id: str, status: str, note: str = "") -> StoryProject:
