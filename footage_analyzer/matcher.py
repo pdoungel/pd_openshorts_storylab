@@ -1,36 +1,29 @@
-"""Transparent baseline matcher and EDL builder."""
-import re
-STOP = {"the","a","an","and","or","to","of","in","on","for","with","from","that","this","is","was","are","were","it","its","as","by","at","be","has","have","had","into","their","they","we","our"}
+"""Semantic visual matcher and voiceover-master EDL builder."""
+from __future__ import annotations
 
-def terms(text):
-    return {x for x in re.findall(r"[a-z0-9]{3,}", text.lower()) if x not in STOP}
+def _text(shot):
+    return " ".join([shot.get("description","")," ".join(shot.get("subjects",[]))," ".join(shot.get("actions",[]))," ".join(shot.get("setting",[]))," ".join(shot.get("tags",[]))])
 
-def score_shot(narration, shot):
-    a = terms(narration.get("text", ""))
-    b = terms((shot.get("description", "") + " " + " ".join(shot.get("tags", []))))
-    lexical = len(a & b) / max(1, len(a))
-    target = float(narration["end"]) - float(narration["start"])
-    duration = float(shot.get("duration", 0))
-    duration_fit = min(duration / max(target, 0.1), 1.0) if duration else 0.0
-    return 0.7 * lexical + 0.3 * duration_fit
+def rank(requirement,shots,topn=5):
+    from storylab.embeddings import rank_texts
+    texts=[_text(s) for s in shots]; rows=rank_texts(requirement.get("visual_query",""),texts,mode="hybrid",provider="auto")
+    return [{"shot":shots[i],"score":round(score,4),"embedding_score":round(emb,4),"lexical_score":round(lex,4),"method":method} for i,score,emb,lex,method in rows[:topn]]
 
-def rank(narration, shots, topn=5):
-    ranked = sorted(shots, key=lambda s: score_shot(narration, s), reverse=True)[:topn]
-    return [{"shot": s, "score": round(score_shot(narration, s), 4)} for s in ranked]
-
-def build_edl(narrations, shots):
-    used = set()
-    edl = []
+def build_visual_edl(narrations,requirements,shots):
+    by_index={r["narration_index"]:r for r in requirements}; used=set(); edl=[]
     for n in narrations:
-        candidates = rank(n, [s for s in shots if s["id"] not in used], 10) or rank(n, shots, 5)
-        if not candidates:
-            continue
-        best = candidates[0]
-        shot = best["shot"]
-        required = float(n["end"]) - float(n["start"])
-        source_start = float(shot["start"])
-        source_end = min(float(shot["end"]), source_start + required)
-        reason = "best available shot is shorter than narration segment" if source_end - source_start < required else "duration-fit baseline; visual metadata not yet enriched"
+        req=by_index.get(n["index"],{"narration_index":n["index"],"visual_query":n["text"]})
+        candidates=rank(req,[s for s in shots if s["id"] not in used],10) or rank(req,shots,10)
+        if not candidates: continue
+        best=candidates[0]; shot=best["shot"]; required=float(n["end"])-float(n["start"])
+        source_start=float(shot["start"]); source_end=min(float(shot["end"]),source_start+required)
+        source_duration=source_end-source_start; fit=min(1.0,source_duration/max(required,0.001))
         used.add(shot["id"])
-        edl.append({"timeline_start": float(n["start"]), "timeline_end": float(n["end"]), "source_path": shot["video_path"], "source_start": source_start, "source_end": source_end, "narration_index": n["index"], "score": best["score"], "reason": reason, "alternatives": [{"shot_id": x["shot"]["id"], "score": x["score"]} for x in candidates[1:4]]})
+        edl.append({"timeline_start":float(n["start"]),"timeline_end":float(n["end"]),"duration":required,
+                    "source_path":shot["video_path"],"source_start":source_start,"source_end":source_end,
+                    "source_duration":source_duration,"narration_index":n["index"],"narration":n["text"],
+                    "visual_query":req["visual_query"],"score":round(0.85*best["score"]+0.15*fit,4),
+                    "match_method":best["method"],"duration_fit":round(fit,4),
+                    "reason":"source is shorter than narration; needs secondary shot/hold" if fit<1 else "semantic visual match with duration fit",
+                    "alternatives":[{"shot_id":x["shot"]["id"],"source_path":x["shot"]["video_path"],"score":x["score"]} for x in candidates[1:5]]})
     return edl

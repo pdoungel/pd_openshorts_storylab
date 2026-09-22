@@ -1,23 +1,21 @@
-# Footage Analyzer MVP
+# Footage Analyzer — Phase 2
 
-Voiceover-first footage planning for OpenShorts / Story Lab.
+Voiceover-first visual matching for OpenShorts / Story Lab.
 
-The voiceover is the master clock. The system first produces timestamped narration segments, then indexes local footage into reusable shots, then builds an edit-decision list (EDL). Footage never determines narration timing.
+Pipeline:
+1. transcribe — existing faster-whisper transcript; voiceover is the master clock.
+2. index — existing TransNetV2/PySceneDetect creates reusable shots.
+3. enrich — FFmpeg samples 3 representative frames per shot and Gemini Vision describes visible content. Results are cached.
+4. plan — Gemini turns each narration segment into a concrete visual requirement.
+5. edl — Story Lab embeddings rank actual visual descriptions against the visual requirement and build a duration-aware EDL with alternatives.
 
-## Current MVP
+Gemini is used for the vision/reasoning stages. Raw footage stays local except for sampled contact-sheet images sent for visual analysis. Do not use this mode for footage that cannot be sent to a third-party API.
 
-- transcribe: reuses the existing OpenShorts/Story Lab faster-whisper backend.
-- index: recursively scans local video and reuses scene_detection.py.
-- edl: creates a transparent baseline EDL and preserves alternatives.
+Test from repository root after setting GEMINI_API_KEY:
+python -m footage_analyzer.cli transcribe /path/to/voiceover.wav --out workspace/voiceover.json
+python -m footage_analyzer.cli index /path/to/footage --out workspace/footage_index.json --max-files 1
+python -m footage_analyzer.cli enrich --index workspace/footage_index.json --out workspace/visual_index.json --limit 5
+python -m footage_analyzer.cli plan --voiceover workspace/voiceover.json --out workspace/visual_plan.json
+python -m footage_analyzer.cli edl --voiceover workspace/voiceover.json --index workspace/visual_index.json --plan workspace/visual_plan.json --out workspace/edl.json
 
-## Usage
-
-From the repository root:
-
-python -m footage_analyzer.cli transcribe /path/to/voiceover.wav
-python -m footage_analyzer.cli index /path/to/footage --out workspace/footage_index.json
-python -m footage_analyzer.cli edl
-
-The EDL is the contract for the next phase: visual descriptions/embeddings, Gemini visual-intent planning, review UI, and direct timeline/render integration.
-
-The baseline matcher deliberately does not claim a shot visually matches merely because its filename matches. Until visual enrichment is enabled, scores are primarily duration-based.
+Start small before indexing the complete library.
