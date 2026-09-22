@@ -16,15 +16,38 @@ def extract_scene(source_path: str, output_path: str, start: float, end: float) 
     if end <= start:
         raise ValueError("Scene end must be greater than start")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", source_path,
-         "-t", f"{end-start:.3f}",
-         "-map", "0:v:0", "-map", "0:a:0?",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-         "-movflags", "+faststart", output_path],
-        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800,
-    )
+    duration = end - start
+    command = [
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", source_path,
+        "-t", f"{duration:.3f}",
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart", output_path,
+    ]
+    try:
+        subprocess.run(
+            command, check=True, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, timeout=1800,
+        )
+    except subprocess.CalledProcessError as exc:
+        # Visual research must still work when the source audio stream/codec
+        # cannot be decoded. The narration is mixed separately later, so a
+        # silent visual clip is preferable to no clip at all.
+        fallback = [
+            "ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", source_path,
+            "-t", f"{duration:.3f}", "-map", "0:v:0",
+            "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path,
+        ]
+        try:
+            subprocess.run(
+                fallback, check=True, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, timeout=1800,
+            )
+        except subprocess.CalledProcessError as fallback_exc:
+            detail = fallback_exc.stderr.decode("utf-8", errors="replace")[-1500:]
+            raise RuntimeError(f"FFmpeg could not extract {start:.3f}-{end:.3f}s: {detail}") from exc
     return output_path
 
 
