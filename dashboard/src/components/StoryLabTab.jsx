@@ -154,7 +154,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   const deleteProject = async (project) => {
     if (!project) return;
     const confirmed = window.confirm(
-      'Delete "' + project.title + '" permanently?\\n\\nThis removes the project, source/input files, extracted clips, narration, renders, transcripts and other files created for it. This cannot be undone.'
+      'Delete "' + project.title + '" permanently?\n\nThis removes the project, source/input files, extracted clips, narration, renders, transcripts and other files created for it. This cannot be undone.'
     );
     if (!confirmed) return;
 
