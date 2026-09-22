@@ -43,5 +43,5 @@ def enrich_index(index_path,output_path,progress=None,limit=None):
         if shot["id"] in old and old[shot["id"]].get("description"): shot.update(old[shot["id"]])
         else: shot.update(describe_shot(shot["video_path"],shot["start"],shot["end"]))
         done+=1
-        if progress: progress(done,total)
+        if progress: progress(done,total,Path(shot["video_path"]).name)
     data["version"]=3; open(output_path,"w",encoding="utf-8").write(json.dumps(data,ensure_ascii=False,indent=2)); return data
