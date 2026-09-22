@@ -1,7 +1,7 @@
 name: Story Lab checks
 on:
   push:
-    paths: ['storylab/**','dashboard/src/App.jsx','dashboard/src/components/StoryLabTab.jsx','app.py','.github/workflows/storylab.yml']
+    paths: ['storylab/**','footage_analyzer/**','dashboard/src/App.jsx','dashboard/src/components/StoryLabTab.jsx','app.py','.github/workflows/storylab.yml']
   pull_request:
     paths: ['storylab/**','dashboard/src/App.jsx','dashboard/src/components/StoryLabTab.jsx','app.py','.github/workflows/storylab.yml']
 jobs:
