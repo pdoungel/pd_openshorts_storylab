@@ -122,10 +122,20 @@ class StoryLabStore:
             project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
             project.scenes = []
             self.save(project)
-            # Timestamped evidence is the ground truth for source footage. Create
-            # those exact playable scenes first; semantic search only supplements them.
+            # Building the story is intentionally a production pass, not just an LLM
+            # response. Timestamped evidence is the ground truth for footage, so we
+            # create and extract those source moments before using semantic search.
             self._create_evidence_scenes(project.id, context_seconds=2.5)
+            self.link_scenes_to_script(project.id)
+
+            # Only search semantically when a section still has no source-backed
+            # scene. This prevents the same early dialogue from being rediscovered
+            # several times and keeps the documentary anchored to the evidence the
+            # storyline actually cited.
+            project = self.get(project.id)
             for section in project.script:
+                if section.scene_ids:
+                    continue
                 query = " ".join(filter(None, [
                     project.brief.question,
                     section.heading,
@@ -139,8 +149,31 @@ class StoryLabStore:
                     max_results=4,
                     search_mode="hybrid",
                 )
+
+            # Link again after the optional semantic pass, then perform the full
+            # FFmpeg extraction pass. Build Story does not finish until every
+            # linked source scene has either produced a verified MP4 or failed
+            # explicitly with an extraction error.
             self.link_scenes_to_script(project.id)
             self._prepare_script_scenes(project.id)
+            project = self.get(project.id)
+            linked_ids = {
+                scene_id
+                for section in project.script
+                for scene_id in section.scene_ids
+            }
+            failed = [
+                scene for scene in project.scenes
+                if scene.id in linked_ids and scene.extraction_status != "extracted"
+            ]
+            if failed:
+                details = "; ".join(
+                    f"{scene.title} [{scene.start:.3f}-{scene.end:.3f}s]: {scene.extraction_error or 'clip extraction failed'}"
+                    for scene in failed[:8]
+                )
+                raise RuntimeError(
+                    f"Story footage processing did not complete for {len(failed)} source clip(s). {details}"
+                )
             self._sync_visual_research_assets(project.id)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
