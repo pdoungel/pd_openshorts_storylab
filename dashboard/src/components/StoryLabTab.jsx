@@ -570,8 +570,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <p className="text-[10px] text-muted mt-2">No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.</p>
   </div>
 </div>
-{selected.renders?.length>0 && <div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <>
-<div className="rounded border border-rule p-3 space-y-4">
+{selected.renders?.length>0 && <div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <div className="rounded border border-rule p-3 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
     <div><span className="readout">YOUTUBE UPLOAD PACKAGE</span><p className="text-[11px] text-muted mt-1">Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.</p></div>
     <button className="btn-ghost text-[11px]" type="button" onClick={copyAllMetadata}><Copy size={13}/>{copiedMetadata === 'all' ? 'copied all' : 'copy all'}</button>
@@ -592,10 +591,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   <div className="flex flex-wrap gap-2">
     <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download><FileText size={13}/> download metadata JSON</a>
   </div>
-</div>
-</>}
-</div>}
-</div>
+</div>}</div></div>}
 </div>}
       </section>
     </div>
