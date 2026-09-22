@@ -261,6 +261,79 @@ class StoryLabStore:
             project.status = "review"
         return self.save(project)
 
+    def _create_evidence_scenes(self, project_id: str, context_seconds: float = 2.5, max_window: float = 18.0) -> StoryProject:
+        """Create playable scenes directly from timestamp-backed source evidence."""
+        project = self.get(project_id)
+        if not project.analysis:
+            return project
+
+        evidence_by_id = {item.id: item for item in project.analysis.evidence}
+        grouped = {}
+        for section in project.script:
+            for evidence_id in section.evidence_ids:
+                item = evidence_by_id.get(evidence_id)
+                if item and item.start is not None and item.end is not None and item.source_id:
+                    grouped.setdefault(item.source_id, []).append(item)
+
+        for source_id, items in grouped.items():
+            source = next((s for s in project.sources if s.id == source_id), None)
+            if not source or source.kind not in {"video", "audio"} or not source.path:
+                continue
+
+            items = sorted({item.id: item for item in items}.values(),
+                           key=lambda item: (item.start or 0.0, item.end or 0.0))
+            clusters = []
+            for item in items:
+                if not clusters:
+                    clusters.append({"start": item.start, "end": item.end, "items": [item]})
+                    continue
+                current = clusters[-1]
+                gap = max(0.0, float(item.start) - float(current["end"]))
+                span = float(item.end) - float(current["start"])
+                if gap <= 1.5 and span <= max_window:
+                    current["end"] = max(float(current["end"]), float(item.end))
+                    current["items"].append(item)
+                else:
+                    clusters.append({"start": item.start, "end": item.end, "items": [item]})
+
+            for cluster in clusters:
+                start = max(0.0, float(cluster["start"]) - context_seconds)
+                end = float(cluster["end"]) + context_seconds
+                if source.duration:
+                    end = min(end, float(source.duration))
+                ids = [item.id for item in cluster["items"]]
+                purpose = " ".join(item.claim for item in cluster["items"] if item.claim).strip()
+                existing = next(
+                    (scene for scene in project.scenes
+                     if scene.source_id == source.id
+                     and abs(scene.start - start) < 0.05
+                     and abs(scene.end - end) < 0.05),
+                    None,
+                )
+                if existing:
+                    existing.evidence_ids = list(dict.fromkeys(existing.evidence_ids + ids))
+                    continue
+
+                project.scenes.append(Scene(
+                    id=f"sn_{uuid.uuid4().hex[:10]}",
+                    start=round(start, 3),
+                    end=round(end, 3),
+                    title=cluster["items"][0].label or "Source moment",
+                    purpose=purpose[:1000],
+                    evidence_ids=ids,
+                    source_id=source.id,
+                    source_file=source.path,
+                    query=purpose.lower()[:2000],
+                    relevance=1.0,
+                    semantic_score=0.0,
+                    lexical_score=1.0,
+                    search_method="lexical",
+                    extraction_status="candidate",
+                ))
+
+        project.scenes.sort(key=lambda scene: (scene.source_id or "", scene.start))
+        return self.save(project)
+
     def search_scenes(self, project_id: str, evidence_ids: list[str] | None = None, query: str = "", context_seconds: float = 3.0, max_results: int = 12, search_mode: str = "hybrid", embedding_provider: str | None = None) -> StoryProject:
         """Find timestamp-backed source moments without requiring Ollama or a cloud API."""
         from .embeddings import rank_texts
