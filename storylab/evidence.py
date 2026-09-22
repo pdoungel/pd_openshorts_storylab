@@ -43,25 +43,46 @@ def _claim(text: str) -> str:
 
 
 def _is_lyric_like(text: str) -> bool:
-    """Return True for text that looks like song/lyric material rather than dialogue.
+    """Return True for song/lyric material, including OCR/ASR-corrupted lyrics.
 
-    This is deliberately conservative: ordinary short dialogue must remain
-    usable evidence. The filter targets common lyric formatting/markers,
-    repeated refrain-like text, and lines dominated by musical cues.
+    Subtitle extraction can produce character-spaced text such as
+    "t s u n a g a r u ...". Those cues are especially common in karaoke/
+    opening sequences and otherwise bypass normal lyric-word heuristics.
     """
     value = " ".join(text.split()).strip()
     if not value:
         return True
 
+    tokens = value.split()
     lowered = value.lower()
-    if re.search(r"(^|\s)(\[?(music|instrumental|singing|sings|song|lyrics|chorus|verse|refrain)\]?)(\s|$)", lowered):
+
+    if re.search(r"(?:♪|♫|♬|🎵|🎶)", value):
         return True
-    if re.search(r"(^|\s)(la+|na+|oh+|ah+|yeah+|ooh+|woo+)([!.,]?\s|$)", lowered) and len(value.split()) <= 12:
+    if re.search(r"(^|\s)(\[?(music|instrumental|singing|sings|song|lyrics|chorus|verse|refrain|opening|ending)\]?)(\s|$)", lowered):
         return True
+    if re.search(r"(^|\s)(la+|na+|oh+|ah+|yeah+|ooh+|woo+)([!.,]?\s|$)", lowered) and len(tokens) <= 12:
+        return True
+
+    # Character-spaced subtitle/OCR output is not useful source dialogue. A high
+    # proportion of one-character alphabetic tokens is a strong signal, while
+    # retaining ordinary short dialogue with normal word spacing.
+    if len(tokens) >= 8:
+        alpha_tokens = [re.sub(r"[^A-Za-z]", "", token) for token in tokens]
+        single_char = sum(len(token) == 1 for token in alpha_tokens)
+        if single_char / max(1, len(alpha_tokens)) >= 0.65:
+            return True
 
     words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", lowered)
     if len(words) < 3:
         return False
+
+    # Collapse duplicated subtitle payloads before judging them. Some embedded
+    # subtitle tracks repeat the same cue twice in one text field.
+    compact = re.sub(r"[^a-z0-9]+", "", lowered)
+    if len(compact) >= 40 and len(compact) % 2 == 0:
+        half = len(compact) // 2
+        if compact[:half] == compact[half:]:
+            return True
 
     # Repeated short phrases are a strong signal of a refrain.
     tokens = [word for word in words if len(word) > 1]
@@ -70,7 +91,6 @@ def _is_lyric_like(text: str) -> bool:
         if " ".join(tokens[:half]) == " ".join(tokens[-half:]):
             return True
 
-    # Lines made mostly of musical filler are not useful documentary evidence.
     filler = {"la", "na", "oh", "ah", "ooh", "woo", "yeah", "hey"}
     filler_count = sum(1 for word in words if word in filler)
     return len(words) >= 4 and filler_count / len(words) >= 0.5
