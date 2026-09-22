@@ -268,10 +268,14 @@ class StoryLabStore:
         if not query_text and not wanted:
             query_text = project.title.lower().strip()
 
+        # Search the full timestamped source pool. Restricting candidates to the
+        # script's initially assigned evidence can yield zero clips when the LLM
+        # chose un-timestamped/derived evidence IDs. The question and section
+        # narration are the relevance filter; wanted evidence receives a small
+        # provenance bonus below.
         candidates = [
             e for e in project.analysis.evidence
-            if e.start is not None and e.end is not None
-            and (not wanted or e.id in wanted) and e.source_id
+            if e.start is not None and e.end is not None and e.source_id
         ]
         rows = []
         for item in candidates:
@@ -286,7 +290,8 @@ class StoryLabStore:
         selected = []
         for row_index, score, semantic_score, lexical_score, method in ranked[:max_results]:
             item, source, _ = rows[row_index]
-            relevance = min(1.0, 0.65 * score + 0.35 * item.confidence)
+            provenance_bonus = 0.15 if item.id in wanted else 0.0
+            relevance = min(1.0, 0.65 * score + 0.35 * item.confidence + provenance_bonus)
             selected.append((relevance, semantic_score, lexical_score, method, item, source))
 
         grouped: dict[str, list[tuple[float, float, float, str, object, object]]] = {}
