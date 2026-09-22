@@ -145,6 +145,14 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("Patterns and meaning", story.interpretation or story.significance, story.interpretation_evidence_ids or story.significance_evidence_ids),
             ("Open questions", " ".join(story.open_questions), [i for group in story.open_question_evidence_ids for i in group]),
         ]
+    elif angle == "review":
+        plans = [
+            ("The question", story.central_question or "What does the supplied episode actually establish?", story.central_question_evidence_ids or story.hook_evidence_ids),
+            ("What the episode establishes", story.context, story.context_evidence_ids),
+            ("Evidence from the episode", " ".join(story.key_events[:5]), [i for group in story.key_event_evidence_ids for i in group]),
+            ("Counterpoint", " ".join(story.counterpoints), [i for group in story.counterpoint_evidence_ids for i in group] or story.interpretation_evidence_ids),
+            ("Conclusion", story.interpretation or story.significance or story.consequences, story.interpretation_evidence_ids or story.significance_evidence_ids or story.consequences_evidence_ids),
+        ]
     elif angle == "ending":
         plans = [
             ("What leads to the ending", story.context, story.context_evidence_ids),
@@ -182,6 +190,8 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
                 "Possible interpretations": {"interpretation", "theory"},
                 "What remains ambiguous": {"question"},
                 "Meaning / takeaway": {"theme", "interpretation"},
+                "Conclusion": {"interpretation", "theory", "theme", "fact"},
+                "Evidence from the episode": {"fact", "event", "character"},
         }.get(heading, {"fact", "event"})
         narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
         linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
