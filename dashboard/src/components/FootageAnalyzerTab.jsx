@@ -7,7 +7,7 @@ const formatTime = (seconds) => {
   const s = Math.max(0, Number(seconds) || 0);
   const m = Math.floor(s / 60);
   const sec = s - m * 60;
-  return \`\${String(m).padStart(2, '0')}:\${sec.toFixed(1).padStart(4, '0')}\`;
+  return `${String(m).padStart(2, '0')}:${sec.toFixed(1).padStart(4, '0')}`;
 };
 
 const demoTimeline = [
@@ -41,7 +41,7 @@ export default function FootageAnalyzerTab() {
     stopPolling();
     const tick = async () => {
       try {
-        const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/jobs/\${id}\`);
+        const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${id}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         setJob(data);
@@ -75,7 +75,7 @@ export default function FootageAnalyzerTab() {
       form.append('voiceover', voiceover);
       form.append('footage_root', footageRoot.trim());
       form.append('instruction', instruction);
-      const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/jobs\`, { method: 'POST', body: form });
+      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs`, { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Could not start analysis');
       setJob(data);
@@ -138,8 +138,8 @@ export default function FootageAnalyzerTab() {
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
               <FolderOpen size={17} className="text-brass mt-0.5 shrink-0" />
               <div className="min-w-0">
-                <p className="text-sm text-ink2">{footageCount ? \`\${footageCount} browser files selected\` : footageRoot ? 'Server-side folder configured' : 'No footage folder configured'}</p>
-                <p className="text-xs text-muted mt-1">{footageCount ? \`\${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB selected\` : 'The analyzer reads the folder directly; large libraries are not uploaded through the browser.'}</p>
+                <p className="text-sm text-ink2">{footageCount ? `${footageCount} browser files selected` : footageRoot ? 'Server-side folder configured' : 'No footage folder configured'}</p>
+                <p className="text-xs text-muted mt-1">{footageCount ? `${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB selected` : 'The analyzer reads the folder directly; large libraries are not uploaded through the browser.'}</p>
               </div>
             </div>
 
@@ -160,7 +160,7 @@ export default function FootageAnalyzerTab() {
             {job && job.status !== 'complete' && job.status !== 'failed' && (
               <div className="border border-rule rounded-input p-3">
                 <div className="flex justify-between text-xs mb-2"><span className="text-muted">{job.message}</span><span className="readout">{job.progress || 0}%</span></div>
-                <div className="h-1.5 bg-paper rounded-full overflow-hidden"><div className="h-full bg-accent transition-all" style={{width: \`\${job.progress || 0}%\`}} /></div>
+                <div className="h-1.5 bg-paper rounded-full overflow-hidden"><div className="h-full bg-accent transition-all" style={{width: `${job.progress || 0}%`}} /></div>
                 <p className="readout mt-2">{job.stage || 'queued'}</p>
               </div>
             )}
@@ -180,7 +180,7 @@ export default function FootageAnalyzerTab() {
                 <p className="eyebrow mb-2">VISUAL TIMELINE</p>
                 <h2 className="font-display lowercase text-xl text-ink">Voiceover → usable footage</h2>
               </div>
-              {job?.status === 'complete' && <a className="btn-quiet" href={\`\${ANALYZER_URL}/api/footage-analyzer/jobs/\${job.id}/edl/download\`}><Download size={13} /> EDL</a>}
+              {job?.status === 'complete' && <a className="btn-quiet" href={`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/edl/download`}><Download size={13} /> EDL</a>}
             </div>
 
             {!timeline.length ? (
@@ -199,7 +199,7 @@ export default function FootageAnalyzerTab() {
                       <div className="min-w-0 flex-1"><p className="text-sm text-ink2 truncate">{clip.description || clip.visual_query || 'Visual match'}</p><p className="text-xs text-muted mt-1 truncate">{clip.source_path} · {formatTime(clip.source_start)}–{formatTime(clip.source_end)}</p></div>
                       <span className={clip.match_type === 'direct' ? 'badge-ok' : clip.match_type === 'related' ? 'badge-brass' : 'badge-warn'}>{typeLabel[clip.match_type] || clip.match_type}</span>
                       <span className="readout hidden sm:block">{Math.round((clip.score || 0) * 100)}%</span>
-                      <ChevronDown size={14} className={\`text-muted transition-transform \${expanded === i ? 'rotate-180' : ''}\`} />
+                      <ChevronDown size={14} className={`text-muted transition-transform ${expanded === i ? 'rotate-180' : ''}`} />
                     </button>
                     {expanded === i && <div className="px-3.5 pb-3.5 pt-0 border-t border-rule grid sm:grid-cols-2 gap-3 text-xs"><div><p className="readout mb-1">why selected</p><p className="text-muted leading-relaxed">{clip.reason || 'Evidence-based visual match.'}</p></div><div><p className="readout mb-1">narration</p><p className="text-muted leading-relaxed">{clip.narration || '—'}</p></div></div>}
                   </div>
