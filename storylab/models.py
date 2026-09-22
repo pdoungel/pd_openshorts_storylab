@@ -190,6 +190,11 @@ class VoiceoverArtifact(BaseModel):
     current_index: int = 0
     total_segments: int = 0
     segments: list[VoiceoverSegment] = Field(default_factory=list)
+    generation_id: Optional[str] = None
+    poll_url: Optional[str] = None
+    voicebox_status: Optional[str] = None
+    model_status: Optional[str] = None
+    model_progress: Optional[float] = None
 
 
 class YouTubePackage(BaseModel):
