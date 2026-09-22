@@ -404,6 +404,7 @@ class StoryLabStore:
         # manual extraction step.
         project = self.extract_scenes(project_id, list(selected))
         self.link_scenes_to_script(project_id)
+        self._sync_visual_research_assets(project_id)
         return self.save(self.get(project_id))
 
     def extract_scenes(self, project_id: str, scene_ids: list[str] | None = None) -> StoryProject:
