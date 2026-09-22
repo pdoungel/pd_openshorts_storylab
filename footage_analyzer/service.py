@@ -14,59 +14,52 @@ class JobStore:
         self.root.mkdir(parents=True,exist_ok=True)
         self.jobs={}
         self.lock=threading.Lock()
-
     def _save(self,j):
         p=self.root/j["id"]; p.mkdir(parents=True,exist_ok=True)
         (p/"job.json").write_text(json.dumps(j,ensure_ascii=False,indent=2),encoding="utf-8")
-
     def create(self,voiceover,footage_root,instruction=""):
         jid=str(uuid.uuid4())
-        job={"id":jid,"status":"queued","stage":"queued","progress":0,"message":"Queued",
-             "voiceover":voiceover,"footage_root":str(Path(footage_root).expanduser().resolve()),
-             "instruction":instruction,"error":None,"result":None}
+        job={"id":jid,"status":"queued","stage":"queued","progress":0,"message":"Queued","voiceover":voiceover,"footage_root":str(Path(footage_root).expanduser().resolve()),"instruction":instruction,"error":None,"result":None}
         with self.lock:
             self.jobs[jid]=job
             self._save(job)
         threading.Thread(target=self.run,args=(jid,),daemon=True).start()
         return job
-
     def get(self,jid):
         with self.lock:
             if jid in self.jobs:return dict(self.jobs[jid])
         p=self.root/jid/"job.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
-
     def update(self,jid,**kw):
         with self.lock:
             self.jobs[jid].update(kw)
             self._save(self.jobs[jid])
-
     def run(self,jid):
-        j=self.get(jid)
-        work=self.root/jid
+        j=self.get(jid); work=self.root/jid
         try:
             voice=work / ("voiceover" + Path(j["voiceover"]).suffix)
             if not voice.exists():
-                # server stages the upload at incoming; copy it into the job for durability
                 src=Path(j["voiceover"]); voice.parent.mkdir(parents=True,exist_ok=True)
                 import shutil; shutil.copy2(src,voice)
-            self.update(jid,status="processing",stage="transcription",progress=5,message="Transcribing voiceover")
+            self.update(jid,status="processing",stage="transcription",progress=5,message=f"Transcribing voiceover · {voice.name}")
             tr=transcribe(str(voice))
             (work/"voiceover.json").write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
             narr=sentence_segments(tr)
             if not narr: raise RuntimeError("No speech segments were detected in the voiceover.")
 
-            self.update(jid,stage="indexing",progress=20,message="Detecting shots in footage")
+            self.update(jid,stage="indexing",progress=20,message="Preparing footage index…")
             idx=work/"footage_index.json"
-            shots=build_index(j["footage_root"],str(idx))
+            def index_progress(done,total,name):
+                self.update(jid,progress=20+int(15*done/max(total,1)),message=f"Indexing footage · {done}/{total} · {name}")
+            shots=build_index(j["footage_root"],str(idx),progress=index_progress)
             if not shots: raise RuntimeError("No video files were found in the selected footage folder.")
 
-            self.update(jid,stage="visual_analysis",progress=35,message=f"Analyzing footage frames · 0/{len(shots)}")
+            self.update(jid,stage="visual_analysis",progress=35,message=f"Preparing visual analysis · 0/{len(shots)} shots")
             vis=work/"visual_index.json"
-            data=enrich_index(str(idx),str(vis),
-                              progress=lambda done,total:self.update(
-                                  jid,progress=35+int(35*done/max(total,1)),
-                                  message=f"Visual analysis · {done}/{total} shots"))
+            def visual_progress(done,total):
+                current=Path(shots[done-1]["video_path"]).name if done and done<=len(shots) else ""
+                self.update(jid,progress=35+int(35*done/max(total,1)),message=f"Visual analysis · {done}/{total} shots · {current}")
+            data=enrich_index(str(idx),str(vis),progress=visual_progress)
             self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
             req=plan(narr,j["instruction"])
             (work/"visual_plan.json").write_text(json.dumps({"version":2,"requirements":req},ensure_ascii=False,indent=2),encoding="utf-8")
@@ -74,11 +67,8 @@ class JobStore:
             self.update(jid,stage="matching",progress=84,message="Matching narration to footage")
             edl=build_visual_edl(narr,req,data.get("shots",[]))
             duration=max((float(x["end"]) for x in narr),default=0)
-            result={"version":3,"master":"voiceover","voiceover_duration":duration,
-                    "clips":edl,"requirements":req,"shot_count":len(data.get("shots",[]))}
+            result={"version":3,"master":"voiceover","voiceover_duration":duration,"clips":edl,"requirements":req,"shot_count":len(data.get("shots",[]))}
             (work/"edl.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
-            self.update(jid,status="complete",stage="complete",progress=100,
-                        message=f"Complete · {len(edl)} timeline clips",result=result)
+            self.update(jid,status="complete",stage="complete",progress=100,message=f"Complete · {len(edl)} timeline clips",result=result)
         except Exception as e:
-            self.update(jid,status="failed",stage="error",progress=0,message=str(e),
-                        error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc()})
+            self.update(jid,status="failed",stage="error",progress=0,message=str(e),error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc()})
