@@ -84,20 +84,14 @@ def _voicebox_profile(profile_id: str) -> dict:
     return {}
 
 
-def _poll_generation(generation_id: str, timeout: int = 1800, progress: Callable[[str], None] | None = None) -> dict:
-    """Wait for Voicebox's queued generation to finish before requesting its audio."""
+def _poll_generation(generation_id: str, poll_url: str | None = None, timeout: int = 1800, progress: Callable[[str], None] | None = None) -> dict:
+    """Poll the exact URL returned by Voicebox, with model-state diagnostics as fallback."""
     deadline = monotonic() + timeout
     last_status = None
+    poll_path = poll_url or f"/generate/{generation_id}/status"
     while monotonic() < deadline:
-        try:
-            payload = _request_json(f"/generate/{generation_id}/status", timeout=15)
-        except VoiceboxError as exc:
-            if "HTTP 404" not in str(exc):
-                raise
-            # Older Voicebox builds expose generation state through history instead
-            # of the dedicated status route.
-            payload = _request_json(f"/history/{generation_id}", timeout=15)
-        status = str(payload.get("status") or "").lower()
+        payload = _request_json(poll_path, timeout=15)
+        status = str(payload.get("status") or payload.get("state") or "").lower()
         if not status and payload.get("audio_path"):
             status = "completed"
         if status != last_status:
@@ -107,11 +101,10 @@ def _poll_generation(generation_id: str, timeout: int = 1800, progress: Callable
         if status in {"completed", "complete", "done", "success", "generated"}:
             return payload
         if status in {"failed", "error", "cancelled", "canceled"}:
-            detail = payload.get("error") or payload.get("message") or "Voicebox generation failed."
-            raise VoiceboxError(str(detail))
+            detail = payload.get("error") or payload.get("message") or payload.get("detail") or "Voicebox generation failed."
+            raise VoiceboxError(f"Voicebox generation {generation_id} failed: {detail}")
         sleep(1.5)
-    raise VoiceboxError(f"Voicebox generation timed out after {timeout} seconds.")
-
+    raise VoiceboxError(f"Voicebox generation {generation_id} timed out after {timeout} seconds.")
 
 class _NarrationRewrite(BaseModel):
     section_index: int = Field(ge=0)
@@ -183,7 +176,7 @@ RULES:
 - Do not describe editing instructions, timestamps, evidence IDs, or clip mechanics.
 - Do not invent dialogue, events, motives, names, or conclusions.
 - Write natural spoken English suitable for a documentary narrator.
-- Keep each section focused; normally 45-110 words, shorter when the material warrants it.
+- Give each section enough substance for an engaging documentary: normally 90-180 words, and up to about 220 words when the evidence supports a richer explanation. Use concrete details, cause-and-effect, stakes, transitions, and a clear connection to the central question. Do not pad with repetition.
 - Preserve the section order and return exactly one rewrite for every section index.
 
 {chr(10).join(sections)}
@@ -356,6 +349,7 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
         if str(response.get("status") or "").lower() not in {"completed", "complete", "done", "success", "generated"}:
             response = _poll_generation(
                 str(generation_id),
+                poll_url=response.get("poll_url"),
                 timeout=1800,
                 progress=lambda status: progress(index, total, f"Voicebox section {index + 1}/{total}: {status}") if progress else None,
             )
