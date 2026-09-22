@@ -186,6 +186,8 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
             ("Meaning / takeaway", story.significance or story.interpretation, story.significance_evidence_ids or story.interpretation_evidence_ids),
         ]
 
+    used_evidence_ids: set[str] = set()
+
     for heading, narration, ids in plans:
         selected_types = {
                 "The question": {"question"},
@@ -210,14 +212,27 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
                 "Evidence from the episode": {"fact", "event", "character"},
         }.get(heading, {"fact", "event"})
         narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
-        linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
-        # Never silently fall back to the first few source lines when a section
-        # has its own provenance. That fallback was the main source of repeated
-        # timestamps and repeated narration across unrelated sections.
-        if not linked and not ids:
+        candidate_ids = list(dict.fromkeys(ids if isinstance(ids, list) else []))
+
+        # Prefer evidence that has not already been used by an earlier section.
+        # A source line may legitimately support multiple claims, but repeating
+        # the same timestamp in every section makes the documentary feel broken.
+        fresh_ids = [eid for eid in candidate_ids if eid not in used_evidence_ids]
+        if fresh_ids:
+            candidate_ids = fresh_ids
+        linked = _evidence_by_ids(analysis, candidate_ids)
+
+        # If a section has no fresh evidence, retain at most one previously-used
+        # item rather than copying an entire earlier evidence window. This keeps
+        # the section grounded without producing duplicate clip piles.
+        if not linked and candidate_ids:
+            linked = _evidence_by_ids(analysis, candidate_ids[:1])
+        if not linked and not candidate_ids:
             linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
+
         narration = _clean_script_narration(narration, linked, used_narration)
         if narration:
             sections.append(_section(heading, narration, linked, selected_insights))
             used_narration.append(narration)
+            used_evidence_ids.update(item.id for item in linked)
     return sections
