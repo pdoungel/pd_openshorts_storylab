@@ -313,7 +313,11 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         headers: {'Content-Type': 'application/json'}
       });
       replaceProject(project);
-      setWorkflowStep('narration');
+      if (project.error) {
+        setError(project.error);
+      } else {
+        setWorkflowStep('narration');
+      }
     } catch (e) {
       setError(e.message || 'Could not prepare narration.');
     } finally {
