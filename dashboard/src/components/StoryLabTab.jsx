@@ -541,7 +541,8 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
       </div>
     </details>
   </div>
-</div>{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
+</div>}
+{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
   <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
     <div className="flex items-center justify-between gap-3">
       <div><span className="readout">EVIDENCE FOR THIS ANGLE</span><p className="text-xs text-muted mt-1">Only evidence linked to the generated question, theory, story sections and counterpoints is shown here. The full transcript remains available below.</p></div>
