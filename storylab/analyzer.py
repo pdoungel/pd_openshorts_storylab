@@ -172,7 +172,12 @@ LANGUAGE REQUIREMENT:
 SOURCE EXCERPTS:
 {citations}
 
-Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every insight and theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts. Ignore song lyrics, karaoke/opening/ending lyrics, music-only subtitle cues, and repeated lyric lines; use dialogue and story-relevant narration instead."""
+Return JSON matching the schema. Every story component must cite supplied excerpt indexes in its corresponding *_evidence_indexes field. Every insight and theory must cite supplied excerpt indexes. Empty evidence lists are acceptable when the component is not established by the supplied sources. Do not invent facts, people, pages, or timestamps. Keep interpretation separate from source-established facts. Ignore song lyrics, karaoke/opening/ending lyrics, music-only subtitle cues, and repeated lyric lines; use dialogue and story-relevant narration instead.
+- Treat the CENTRAL QUESTION as the job of the video. Do not merely summarize the episode; build the story around answering that question from the supplied evidence.
+- Every narrative field must be specific to its own role. Do not copy the summary into hook/context/conflict/consequences/significance, and do not concatenate unrelated evidence excerpts merely to fill a field.
+- For review/theory/why questions, distinguish what the episode shows from what the analysis infers. Answer the question only to the extent supported by the supplied source.
+- Prefer the smallest set of timestamped evidence that actually supports each component. Timestamped dialogue or narration from the uploaded video is preferred over unlocated summary text.
+- Every generated narrative field must be natural spoken English suitable for voiceover, not research instructions, placeholders, labels, or editing notes."""
 
         data, _ = llm_backend.generate_json(prompt, _LLMAnalysis)
         parsed = _LLMAnalysis.model_validate(data)
