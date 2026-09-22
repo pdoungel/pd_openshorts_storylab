@@ -24,6 +24,23 @@ services:
     depends_on:
       - backend
 
+  footage-analyzer:
+    build:
+      context: .
+      dockerfile: footage_analyzer/Dockerfile
+    container_name: openshorts-footage-analyzer
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./footage_analyzer:/app/footage_analyzer
+      - ./workspace:/app/workspace
+      - /Users:/Users:ro
+      - /Volumes:/Volumes:ro
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FOOTAGE_ANALYZER_WORKDIR=/app/workspace/footage_analyzer
+    restart: unless-stopped
+
   renderer:
     build:
       context: .
