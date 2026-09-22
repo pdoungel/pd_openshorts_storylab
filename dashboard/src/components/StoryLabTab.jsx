@@ -505,6 +505,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                         <span className="text-[10px] uppercase text-muted">{scene.extraction_status}</span>
                       </div>
                       <p className="text-[11px] text-ink2 mt-1">{scene.purpose}</p>
+                      {scene.extraction_error && <p className="text-[10px] text-warn mt-1">Extraction error: {scene.extraction_error}</p>}
                       {scene.output_file ? (
                         <video className="w-full aspect-video rounded border border-rule bg-black object-contain mt-2" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} />
                       ) : (
