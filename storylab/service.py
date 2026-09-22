@@ -283,11 +283,12 @@ class StoryLabStore:
 
         evidence_by_id = {item.id: item for item in project.analysis.evidence}
         grouped = {}
-        for section in project.script:
-            for evidence_id in section.evidence_ids:
-                item = evidence_by_id.get(evidence_id)
-                if item and item.start is not None and item.end is not None and item.source_id:
-                    grouped.setdefault(item.source_id, []).append(item)
+        # Every timestamp-backed evidence item gets a playable candidate. The
+        # Evidence Timeline is the source-footage index, so it must not depend
+        # on the LLM having already attached that evidence to a script section.
+        for item in project.analysis.evidence:
+            if item.start is not None and item.end is not None and item.source_id:
+                grouped.setdefault(item.source_id, []).append(item)
 
         for source_id, items in grouped.items():
             source = next((s for s in project.sources if s.id == source_id), None)
