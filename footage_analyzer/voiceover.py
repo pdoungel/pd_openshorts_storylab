@@ -1,23 +1,16 @@
-"""Voiceover-first timeline extraction."""
+"""Independent voiceover transcription backend."""
 from pathlib import Path
-import json
-
-def transcribe(path: str, local_only: bool = True) -> dict:
-    p = str(Path(path).expanduser().resolve())
-    try:
-        from transcribe_backends import transcribe_media_local, transcribe_media
-    except ImportError as exc:
-        raise RuntimeError("Run footage_analyzer from the OpenShorts/Story Lab checkout.") from exc
-    return transcribe_media_local(p) if local_only else transcribe_media(p)
-
-def sentence_segments(transcript: dict) -> list[dict]:
-    result = []
-    for seg in transcript.get("segments", []):
-        text = " ".join(str(seg.get("text", "")).split()).strip()
-        if not text:
-            continue
-        result.append({"index": len(result), "start": float(seg["start"]), "end": float(seg["end"]), "text": text})
-    return result
-
-def save_transcript(transcript: dict, output: str):
-    Path(output).write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+import os
+def transcribe(path):
+    from faster_whisper import WhisperModel
+    model=WhisperModel(os.getenv("FOOTAGE_WHISPER_MODEL","small"),device=os.getenv("FOOTAGE_WHISPER_DEVICE","cpu"),compute_type=os.getenv("FOOTAGE_WHISPER_COMPUTE","int8"))
+    segments,info=model.transcribe(str(Path(path).expanduser().resolve()),word_timestamps=True,vad_filter=True)
+    out=[]; text=[]
+    for s in segments:
+        t=str(s.text).strip()
+        if not t: continue
+        out.append({"start":float(s.start),"end":float(s.end),"text":t,"words":[{"word":w.word,"start":float(w.start),"end":float(w.end)} for w in (s.words or [])]})
+        text.append(t)
+    return {"text":" ".join(text),"language":getattr(info,"language","en"),"segments":out}
+def sentence_segments(transcript):
+    return [{"index":i,"start":float(s["start"]),"end":float(s["end"]),"text":" ".join(str(s["text"]).split()).strip()} for i,s in enumerate(transcript.get("segments",[])) if str(s.get("text","")).strip()]
