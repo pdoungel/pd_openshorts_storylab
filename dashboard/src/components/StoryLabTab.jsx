@@ -572,35 +572,22 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     </div>
   </details>
 </div>}{selected.script?.length>0 && <div className="space-y-2"><div className="flex justify-between items-center"><span className="readout">SCRIPT & VISUAL RESEARCH</span>{selected.status==='approved' && <button className="btn-primary" disabled={loading} onClick={render}><Clapperboard size={14}/> create final video</button>}</div>{selected.script.map(section=><div key={section.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-3"><div><div className="text-sm text-ink">{section.heading} · {section.duration_seconds}s</div><p className="text-xs text-muted mt-1">{section.narration}</p><p className="text-xs text-muted mt-2">Visual: {section.visual_suggestions?.map(v=>v.material_type.replace('_',' ')).join(', ')}</p>{sceneById(section.scene_ids || []).length > 0 && <div className="mt-3 rounded border border-rule p-2"><div className="text-[10px] uppercase tracking-wide text-brass">SOURCE SCENES</div><div className="mt-2 space-y-2">{sceneById(section.scene_ids || []).map(scene=><div key={scene.id} className="flex items-center justify-between gap-2"><div><div className="text-xs text-ink">{scene.title}</div><div className="text-[10px] text-muted">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · {scene.extraction_status}</div></div>{scene.extraction_status==='candidate' && <button className="btn-ghost text-[10px]" disabled={loading} onClick={()=>extractScenes([scene.id])}>extract scene</button>}</div>)}</div></div>}{section.visual_research?.length>0 && <div className="mt-3 space-y-2">{section.visual_research.map(v => {
-  const hasAsset = Boolean(v.asset_path) || sceneById(section.scene_ids || []).some(scene => scene.extraction_status === 'extracted' && scene.output_file);
+  const visualScenes = sceneById(section.scene_ids || []).filter(scene => (v.evidence_ids || []).some(id => (scene.evidence_ids || []).includes(id)));
+  const fallbackScenes = visualScenes.length ? visualScenes : sceneById(section.scene_ids || []);
+  const readyScenes = fallbackScenes.filter(scene => scene.output_file && scene.extraction_status === 'extracted');
   const isSourceBacked = v.material_type === 'source_backed';
-  const canApprove = isSourceBacked ? hasAsset : v.material_type !== 'generated';
-  return <div key={v.id} className="rounded border border-rule p-2">
+  const canApprove = isSourceBacked ? readyScenes.length > 0 : v.material_type !== 'generated';
+  return <div key={v.id} className="rounded border border-rule p-3">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-      <span className="text-xs text-ink">{v.material_type.replace('_',' ')}: {v.description}</span>
-      <button
-        className="btn-ghost text-[11px]"
-        disabled={loading || v.status === 'approved' || !canApprove}
-        onClick={() => reviewVisual(v)}
-      >
-        {v.status === 'approved'
-          ? 'visual approved'
-          : canApprove
-            ? (isSourceBacked ? 'approve visual' : 'approve research plan')
-            : 'asset needed'}
+      <div><div className="text-xs text-ink">{v.material_type.replace('_',' ')}</div><p className="text-[11px] text-ink2 mt-1">{v.description}</p></div>
+      <button className="btn-ghost text-[11px] shrink-0" disabled={loading || v.status === 'approved' || !canApprove} onClick={() => reviewVisual(v)}>
+        {v.status === 'approved' && canApprove ? 'visual approved' : canApprove ? 'approve visual' : 'clip not ready'}
       </button>
     </div>
-    <p className="text-[10px] text-muted mt-1">
-      {v.evidence_ids?.length || 0} evidence link(s)
-      {hasAsset ? ' · asset ready' : v.source_id ? ' · source linked · asset needed' : ' · asset needed'}
-    </p>
-    {isSourceBacked && !hasAsset && (
-      <p className="text-[10px] text-warn mt-1">
-        This visual is tied to source evidence but has no extracted scene yet. Search/select the cited source moment in Scene Research.
-      </p>
-    )}
+    <p className="text-[10px] text-muted mt-1">{v.evidence_ids?.length || 0} evidence link(s) · {readyScenes.length ? (readyScenes.length + ' clip' + (readyScenes.length === 1 ? '' : 's') + ' ready') : 'no extracted clip'}</p>
+    {readyScenes.length > 0 ? <div className="grid sm:grid-cols-2 gap-2 mt-3">{readyScenes.map(scene => <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black"><video className="w-full aspect-video object-contain" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} /><div className="bg-paper px-2 py-1.5"><div className="text-[11px] text-ink">{scene.title}</div><div className="text-[10px] text-muted">{scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s</div></div></div>)}</div> : <div className="mt-2 rounded border border-dashed border-rule p-3 text-[11px] text-muted">The relevant source moment has been found, but its video clip is not extracted yet. {fallbackScenes.some(scene => scene.extraction_status === 'error') ? 'Clip extraction failed; the error is shown in Scene Research.' : 'Run Analyze Story again or extract the candidate clip.'}</div>}
   </div>;
-})}</div>}</div><button className="btn-ghost" disabled={loading||section.approved} onClick={()=>review(section)}>{section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}</button></div></div>)}</div>}
+})}</div></div><button className="btn-ghost" disabled={loading||section.approved} onClick={()=>review(section)}>{section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}</button></div></div>)}</div>}
 {selected.script?.length > 0 && (
   <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
