@@ -150,33 +150,13 @@ class StoryLabStore:
                     search_mode="hybrid",
                 )
 
-            # Link again after the optional semantic pass, then perform the full
-            # FFmpeg extraction pass. Build Story does not finish until every
-            # linked source scene has either produced a verified MP4 or failed
-            # explicitly with an extraction error.
+            # Build Story stops after the editorial/evidence pass. Source footage
+            # extraction is an explicit production step in Step 3 so the user can
+            # review the sequential evidence timeline before committing disk/CPU
+            # time to every timestamp window.
             self.link_scenes_to_script(project.id)
-            self._prepare_script_scenes(project.id)
             project = self.get(project.id)
-            linked_ids = {
-                scene_id
-                for section in project.script
-                for scene_id in section.scene_ids
-            }
-            failed = [
-                scene for scene in project.scenes
-                if scene.id in linked_ids and scene.extraction_status != "extracted"
-            ]
-            if failed:
-                details = "; ".join(
-                    f"{scene.title} [{scene.start:.3f}-{scene.end:.3f}s]: {scene.extraction_error or 'clip extraction failed'}"
-                    for scene in failed[:8]
-                )
-                raise RuntimeError(
-                    f"Story footage processing did not complete for {len(failed)} source clip(s). {details}"
-                )
             self._sync_visual_research_assets(project.id)
-            # A freeform transcript can produce an outline, but it enters formal
-            # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
             project.error = None
         except Exception as exc:
@@ -453,6 +433,7 @@ class StoryLabStore:
                     relevance=relevance, semantic_score=semantic_score,
                     lexical_score=lexical_score, search_method=method,
                     extraction_status="candidate",
+                    selected=False,
                 ))
         project.scenes.sort(key=lambda s: s.relevance, reverse=True)
         return self.save(project)
