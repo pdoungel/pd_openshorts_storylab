@@ -182,6 +182,11 @@ async def voicebox_profiles():
         raise HTTPException(503, str(exc))
 
 
+@router.post("/projects/{project_id}/narration/prepare")
+async def prepare_project_narration(project_id: str):
+    return _project_or_404(lambda: store.prepare_narration(project_id))
+
+
 @router.post("/projects/{project_id}/voiceover")
 async def generate_project_voiceover(project_id: str, payload: VoiceoverRequest):
     return _project_or_404(lambda: store.generate_voiceover(project_id, payload.profile_id))
