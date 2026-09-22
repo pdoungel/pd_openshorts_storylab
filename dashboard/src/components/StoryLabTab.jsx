@@ -99,7 +99,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     setSelected(project);
     setAngle(project.brief?.angle || 'story');
     setQuestion(project.brief?.question || '');
-    setWorkflowStep(project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources');
+    setWorkflowStep(project.status === 'error' ? 'sources' : (project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources'));
   };
 
   const load = async () => {
@@ -189,8 +189,14 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         body: JSON.stringify({ transcript: '' })
       });
       replaceProject(project);
-      setAnalysisMessage('Complete source analysis is ready. Now choose the question or theory that should drive the documentary.');
-      setWorkflowStep('angle');
+      if (project.status === 'error') {
+        setError(project.error || 'Source analysis failed. Check the error details below and try again.');
+        setAnalysisMessage('');
+        setWorkflowStep('sources');
+      } else {
+        setAnalysisMessage('Complete source analysis is ready. Now choose the question or theory that should drive the documentary.');
+        setWorkflowStep('angle');
+      }
     } catch (e) {
       setError(e.message || 'Source analysis failed.');
     } finally {
@@ -537,6 +543,16 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                   )}
                 </div>
               </div>
+
+              {selected.status === 'error' && selected.error && (
+                <div className="rounded-input border border-red-500/40 bg-red-500/5 p-4">
+                  <div className="readout text-red-700">STORY LAB ERROR</div>
+                  <p className="text-xs text-red-800 mt-2 whitespace-pre-wrap break-words">{selected.error}</p>
+                  <p className="text-[11px] text-muted mt-2">
+                    The project was not successfully analyzed. Fix the source/configuration issue and run the analysis again.
+                  </p>
+                </div>
+              )}
 
               {workflowStep === 'sources' && (
                 <div className="space-y-6">
