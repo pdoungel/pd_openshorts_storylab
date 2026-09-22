@@ -51,18 +51,33 @@ class StoryLabStore:
         return sorted(projects, key=lambda project: project.updated_at, reverse=True)
 
     def delete(self, project_id: str) -> None:
-        """Permanently remove a Story Lab project and all project-owned artifacts."""
+        """Permanently remove one project and every artifact owned by that project.
+
+        Project IDs are validated before constructing paths. Only directories
+        rooted under Story Lab's own output directory are ever removed.
+        """
         project_path = self._path(project_id)
         if not project_path.is_file():
             raise FileNotFoundError(project_id)
 
-        # All Story Lab project data is namespaced by the validated UUID. Remove
-        # the JSON record plus source snapshots, extracted scenes and renders.
+        # Keep this list explicit: these are Story Lab's project-scoped storage
+        # areas. This also covers older projects that used an input/inputs area.
+        project_dirs = (
+            "input", "inputs", "sources", "scenes", "clips",
+            "renders", "voiceover", "audio", "narration",
+        )
+        for dirname in project_dirs:
+            path = (self.root / dirname / project_id).resolve()
+            if self.root not in path.parents:
+                raise ValueError("Unsafe Story Lab project path")
+            if path.is_dir() or path.is_symlink():
+                if path.is_symlink():
+                    path.unlink()
+                else:
+                    shutil.rmtree(path)
+
+        # Remove the project manifest last, after all project-owned artifacts.
         project_path.unlink()
-        for relative in (Path("sources") / project_id, Path("scenes") / project_id, Path("renders") / project_id, Path("voiceover") / project_id):
-            path = self.root / relative
-            if path.exists():
-                shutil.rmtree(path)
 
     def create(self, payload: StoryProjectCreate) -> StoryProject:
         now = datetime.now(timezone.utc).isoformat()
