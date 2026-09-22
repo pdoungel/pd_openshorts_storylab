@@ -107,7 +107,23 @@ class StoryLabStore:
             project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
             project.scenes = []
             self.save(project)
-            self.search_scenes(project.id)
+            # Scene research is driven by each generated script section, not one
+            # generic project-wide query. Each section therefore gets timestamped
+            # source moments relevant to the exact narration/question it will cover.
+            for section in project.script:
+                query = " ".join(filter(None, [
+                    project.brief.question,
+                    section.heading,
+                    section.narration,
+                ])).strip()
+                self.search_scenes(
+                    project.id,
+                    evidence_ids=section.evidence_ids,
+                    query=query,
+                    context_seconds=2.5,
+                    max_results=4,
+                    search_mode="hybrid",
+                )
             self.link_scenes_to_script(project.id)
             self._prepare_script_scenes(project.id)
             self._sync_visual_research_assets(project.id)
