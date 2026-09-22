@@ -12,7 +12,7 @@ from .models import RenderArtifact, ReviewItem, Scene, StoryBuilder, StoryProjec
 from .renderer import render_documentary, extract_scene, mux_narration
 from .script import build_script
 from .youtube import build_youtube_package
-from .tts import generate_voiceover, voicebox_profiles, voicebox_status
+from .tts import generate_voiceover, prepare_narration, voicebox_profiles, voicebox_status
 
 
 class StoryLabStore:
@@ -574,10 +574,23 @@ class StoryLabStore:
     def voicebox_profiles(self) -> list[dict]:
         return voicebox_profiles()
 
+    def prepare_narration(self, project_id: str) -> StoryProject:
+        project = self.get(project_id)
+        if not project.script or not project.analysis:
+            raise ValueError("Build the Story Lab story before preparing narration.")
+        try:
+            project = prepare_narration(project)
+            project.status = "review"
+            project.error = None
+            return self.save(project)
+        except Exception as exc:
+            project.error = str(exc)
+            return self.save(project)
+
     def generate_voiceover(self, project_id: str, profile_id: str) -> StoryProject:
         project = self.get(project_id)
         if not project.script or not all(section.approved for section in project.script):
-            raise ValueError("Approve every script section before generating narration.")
+            raise ValueError("Prepare and approve every Story Lab narration section before generating narration.")
         now = datetime.now(timezone.utc).isoformat()
         from .models import VoiceoverArtifact
         project.voiceover = VoiceoverArtifact(
@@ -586,11 +599,11 @@ class StoryLabStore:
         self.save(project)
         try:
             output_dir = self.root / "voiceover" / project.id
-            script_path, timing_path, audio_path = generate_voiceover(project, profile_id, output_dir)
+            script_path, timing_path, audio_path, segments = generate_voiceover(project, profile_id, output_dir)
             project.voiceover = VoiceoverArtifact(
                 status="generated", provider="voicebox", profile_id=profile_id,
                 script_path=script_path, timing_path=timing_path, audio_path=audio_path,
-                created_at=now,
+                segments=segments, created_at=now,
             )
             project.error = None
         except Exception as exc:
