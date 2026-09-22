@@ -17,15 +17,17 @@ def detect_scenes(path):
         duration=probe_duration(path); return [(0.0,duration)],0.0
 def shot_id(path,start,end):
     return hashlib.sha1(("%s|%.6f|%.6f" % (Path(path).resolve(),start,end)).encode()).hexdigest()[:16]
-def build_index(root,output,max_files=None):
+def build_index(root,output,max_files=None,progress=None):
     files=media_files(root)
     if max_files: files=files[:max_files]
-    records=[]
-    for path in files:
+    records=[]; total=len(files)
+    for number,path in enumerate(files,1):
+        if progress: progress(number-1,total,path.name)
         scenes,fps=detect_scenes(str(path))
         for start,end in scenes:
             if end>start:
                 records.append({"id":shot_id(path,start,end),"video_path":str(path),"start":start,"end":end,"duration":end-start,"fps":fps,"description":"","tags":[]})
+        if progress: progress(number,total,path.name)
     Path(output).parent.mkdir(parents=True,exist_ok=True)
     Path(output).write_text(json.dumps({"version":2,"root":str(Path(root).expanduser().resolve()),"shots":records},ensure_ascii=False,indent=2))
     return records
