@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Film, Plus, Sparkles, Clock3, BookOpen, Lightbulb, CheckCircle2,
   FileText, Clapperboard, HelpCircle, X, ChevronRight, ChevronLeft,
-  PlayCircle, Check, Circle, Upload, MessageSquareQuestion
+  PlayCircle, Check, Circle, Upload
 } from 'lucide-react';
 import { apiJson } from '../lib/api';
 
@@ -588,7 +588,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                   </div>
 
                   <div className="rounded-input border border-rule p-4">
-                    <label className="readout flex items-center gap-2 mb-2"><MessageSquareQuestion size={14}/> CENTRAL QUESTION / THEORY / WHY</label>
+                    <label className="readout flex items-center gap-2 mb-2"><HelpCircle size={14}/> CENTRAL QUESTION / THEORY / WHY</label>
                     <textarea
                       className="input-field w-full min-h-24 resize-y"
                       placeholder="Example: Is Satou actually an isekai? Why did this happen? What evidence supports this theory?"
