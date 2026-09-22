@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -192,6 +192,27 @@ async def generate_project_voiceover(project_id: str, payload: VoiceoverRequest)
     return _project_or_404(lambda: store.generate_voiceover(project_id, payload.profile_id))
 
 
+@router.post("/projects/{project_id}/narration/audio/upload")
+async def upload_narration_audio(
+    project_id: str,
+    file: UploadFile = File(...),
+    section_id: str | None = Form(default=None),
+    combined: bool = Form(default=False),
+):
+    suffix = Path(file.filename or "narration.wav").suffix or ".wav"
+    handle = tempfile.NamedTemporaryFile(prefix="storylab_narration_", suffix=suffix, delete=False)
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            shutil.copyfileobj(file.file, handle)
+        return _project_or_404(lambda: store.upload_narration_audio(
+            project_id, str(temporary), section_id=section_id, combined=combined
+        ))
+    finally:
+        await file.close()
+        temporary.unlink(missing_ok=True)
+
+
 @router.post("/projects/{project_id}/render")
 async def render_project(project_id: str):
     return _project_or_404(lambda: store.render(project_id))
@@ -235,7 +256,7 @@ async def download_narration_audio(project_id: str):
         project = store.get(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Story Lab project not found")
-    if not project.voiceover or project.voiceover.status != "generated" or not project.voiceover.audio_path:
+    if not project.voiceover or project.voiceover.status not in {"generated", "manual"} or not project.voiceover.audio_path:
         raise HTTPException(404, "Generated narration audio is not available.")
     path = Path(project.voiceover.audio_path).resolve()
     root = store.root.resolve()
