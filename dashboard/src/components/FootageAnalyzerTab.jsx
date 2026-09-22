@@ -24,6 +24,7 @@ export default function FootageAnalyzerTab() {
   const [footageRoot, setFootageRoot] = useState('');
   const [footageFolderName, setFootageFolderName] = useState('');
   const [resolvingFolder, setResolvingFolder] = useState(false);
+  const [folderResolutionError, setFolderResolutionError] = useState('');
   const [instruction, setInstruction] = useState('');
   const [job, setJob] = useState(null);
   const [timeline, setTimeline] = useState([]);
@@ -139,14 +140,20 @@ export default function FootageAnalyzerTab() {
                 <input type="file" multiple webkitdirectory="" directory="" accept="video/*" className="hidden"
                   onChange={async e => {
                     const files = Array.from(e.target.files || []);
-                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setError('');
+                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError('');
                     if (!files.length) return;
                     const first = files[0];
                     const folderName = (first.webkitRelativePath || '').split('/')[0] || '';
                     setFootageFolderName(folderName);
                     const nativePath = first.path;
+                    const relativePath = (first.webkitRelativePath || '').replace(/^\/+|\/+$/g, '');
                     if (nativePath && (nativePath.startsWith('/Users/') || nativePath.startsWith('/Volumes/'))) {
-                      setFootageRoot(nativePath.slice(0, nativePath.lastIndexOf('/'))); return;
+                      const rootPath = relativePath && nativePath.endsWith(relativePath)
+                        ? nativePath.slice(0, nativePath.length - relativePath.length).replace(/\/$/, '')
+                        : nativePath.slice(0, nativePath.lastIndexOf('/'));
+                      setFootageRoot(rootPath);
+                      setResolvingFolder(false);
+                      return;
                     }
                     setResolvingFolder(true);
                     try {
@@ -155,10 +162,16 @@ export default function FootageAnalyzerTab() {
                         body: JSON.stringify({ folder_name: folderName, samples: files.slice(0, 10).map(f => ({ relative_path: f.webkitRelativePath, size: f.size })) })
                       });
                       const resolveData = await resolveRes.json().catch(() => ({}));
-                      if (!resolveRes.ok) throw new Error(resolveData.detail || 'Could not locate the selected folder');
+                      if (!resolveRes.ok) {
+                        const detail = typeof resolveData.detail === 'string' ? resolveData.detail : resolveData.detail?.message || 'Could not locate the selected folder';
+                        throw new Error(detail);
+                      }
                       setFootageRoot(resolveData.path);
+                      setFolderResolutionError('');
                     } catch (err) {
-                      setError(err.message || 'Could not locate the selected folder');
+                      const message = err.message || 'Could not locate the selected folder';
+                      setFolderResolutionError(message);
+                      setError(message);
                     } finally { setResolvingFolder(false); }
                   }}
                 />
@@ -167,10 +180,22 @@ export default function FootageAnalyzerTab() {
             </div>
 
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
-              {resolvingFolder ? <Loader2 size={17} className="text-brass mt-0.5 shrink-0 animate-spin" /> : footageRoot ? <CheckCircle2 size={17} className="text-brass mt-0.5 shrink-0" /> : <FolderOpen size={17} className="text-muted mt-0.5 shrink-0" /> }
-              <div className="min-w-0">
-                <p className="text-sm text-ink2">{resolvingFolder ? 'Locating selected folder…' : footageFolderName || 'No footage folder selected'}</p>
-                <p className="text-xs text-muted mt-1">{footageRoot || (footageCount ? `${footageCount} video files found in the selected folder` : 'Select a footage folder from Finder.')}</p>
+              {resolvingFolder ? <Loader2 size={17} className="text-brass mt-0.5 shrink-0 animate-spin" /> : footageRoot ? <CheckCircle2 size={17} className="text-brass mt-0.5 shrink-0" /> : folderResolutionError ? <AlertTriangle size={17} className="text-brass mt-0.5 shrink-0" /> : <FolderOpen size={17} className="text-muted mt-0.5 shrink-0" />}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-ink2">{resolvingFolder ? 'Checking analyzer access…' : footageFolderName || 'No footage folder selected'}</p>
+                {footageRoot ? (
+                  <>
+                    <p className="text-xs text-muted mt-1 break-all">{footageRoot}</p>
+                    <p className="text-[11px] text-muted mt-1">{footageCount} video files detected · analyzer can access this folder</p>
+                  </>
+                ) : folderResolutionError ? (
+                  <>
+                    <p className="text-xs text-muted mt-1 leading-relaxed">{footageCount} video files detected in the browser, but the analyzer cannot access this folder yet.</p>
+                    <p className="text-[11px] text-brass mt-1 leading-relaxed">{folderResolutionError}</p>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted mt-1">{footageCount ? `${footageCount} video files detected · checking analyzer access…` : 'Select a footage folder from Finder.'}</p>
+                )}
               </div>
             </div>
 
