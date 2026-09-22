@@ -89,8 +89,17 @@ def _poll_generation(generation_id: str, timeout: int = 1800, progress: Callable
     deadline = monotonic() + timeout
     last_status = None
     while monotonic() < deadline:
-        payload = _request_json(f"/generate/{generation_id}/status", timeout=15)
+        try:
+            payload = _request_json(f"/generate/{generation_id}/status", timeout=15)
+        except VoiceboxError as exc:
+            if "HTTP 404" not in str(exc):
+                raise
+            # Older Voicebox builds expose generation state through history instead
+            # of the dedicated status route.
+            payload = _request_json(f"/history/{generation_id}", timeout=15)
         status = str(payload.get("status") or "").lower()
+        if not status and payload.get("audio_path"):
+            status = "completed"
         if status != last_status:
             last_status = status
             if progress:
