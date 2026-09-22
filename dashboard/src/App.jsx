@@ -23,7 +23,7 @@ import TrialGate from './components/TrialGate';
 import AdvancedBanner from './components/AdvancedBanner';
 import HistoryTab from './components/HistoryTab';
 import StoryLabTab from './components/StoryLabTab';
-import FootageAnalyzerTab from './components/FootageAnalyzerTab';
+const FootageAnalyzerTab = React.lazy(() => import('./components/FootageAnalyzerTab.jsx'));
 import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
