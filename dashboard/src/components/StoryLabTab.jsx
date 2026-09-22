@@ -652,27 +652,31 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   </div>
 )}
 
-{selected.renders?.length > 0 && (
+{selected.renders?.length > 0 ? (
   <div className="rounded-input border border-rule p-4 space-y-4">
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div>
         <span className="readout">FINAL VIDEO</span>
         <p className="text-xs text-muted mt-1">
           The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.
         </p>
       </div>
-      {selected.renders[selected.renders.length - 1].status === 'rendered' && (
-        <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download>
+      {selected.renders[selected.renders.length - 1].status === 'rendered' ? (
+        <a
+          className="btn-primary"
+          href={'/api/storylab/projects/' + selected.id + '/download/render'}
+          download
+        >
           <FileText size={14}/> download final video
         </a>
-      )}
+      ) : null}
     </div>
 
     <div className="text-xs text-muted">
       Latest render: {selected.renders[selected.renders.length - 1].status}. Selected clips are extracted automatically and assembled in script order.
     </div>
 
-    {selected.youtube && (
+    {selected.youtube ? (
       <div className="rounded border border-rule p-3 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div>
@@ -681,15 +685,24 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
               Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.
             </p>
           </div>
-          <button className="btn-ghost text-[11px]" type="button" onClick={copyAllMetadata}>
-            <Copy size={13}/>{copiedMetadata === 'all' ? 'copied all' : 'copy all'}
+          <button
+            className="btn-ghost text-[11px]"
+            type="button"
+            onClick={copyAllMetadata}
+          >
+            <Copy size={13}/>
+            {copiedMetadata === 'all' ? 'copied all' : 'copy all'}
           </button>
         </div>
 
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <label className="eyebrow">YOUTUBE TITLE</label>
-            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('title', selected.youtube.title || '')}>
+            <button
+              type="button"
+              className="btn-ghost text-[10px]"
+              onClick={() => copyMetadata('title', selected.youtube.title || '')}
+            >
               {copiedMetadata === 'title' ? <Check size={13}/> : <Copy size={13}/>}
               {copiedMetadata === 'title' ? 'copied' : 'copy'}
             </button>
@@ -698,7 +711,10 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
             className="input-field w-full"
             maxLength={100}
             value={selected.youtube.title || ''}
-            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, title: e.target.value}})}
+            onChange={e => replaceProject({
+              ...selected,
+              youtube: {...selected.youtube, title: e.target.value}
+            })}
             onBlur={() => saveYoutube({title: selected.youtube.title})}
             placeholder="Video title"
           />
@@ -707,7 +723,11 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <label className="eyebrow">YOUTUBE DESCRIPTION</label>
-            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('description', selected.youtube.description || '')}>
+            <button
+              type="button"
+              className="btn-ghost text-[10px]"
+              onClick={() => copyMetadata('description', selected.youtube.description || '')}
+            >
               {copiedMetadata === 'description' ? <Check size={13}/> : <Copy size={13}/>}
               {copiedMetadata === 'description' ? 'copied' : 'copy'}
             </button>
@@ -716,7 +736,10 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
             className="input-field w-full min-h-40 resize-y"
             maxLength={5000}
             value={selected.youtube.description || ''}
-            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, description: e.target.value}})}
+            onChange={e => replaceProject({
+              ...selected,
+              youtube: {...selected.youtube, description: e.target.value}
+            })}
             onBlur={() => saveYoutube({description: selected.youtube.description})}
             placeholder="Video description"
           />
@@ -725,7 +748,11 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         <div>
           <div className="flex items-center justify-between gap-2 mb-1.5">
             <label className="eyebrow">YOUTUBE TAGS</label>
-            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('tags', (selected.youtube.tags || []).join(', '))}>
+            <button
+              type="button"
+              className="btn-ghost text-[10px]"
+              onClick={() => copyMetadata('tags', (selected.youtube.tags || []).join(', '))}
+            >
               {copiedMetadata === 'tags' ? <Check size={13}/> : <Copy size={13}/>}
               {copiedMetadata === 'tags' ? 'copied' : 'copy'}
             </button>
@@ -733,7 +760,13 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
           <input
             className="input-field w-full"
             value={(selected.youtube.tags || []).join(', ')}
-            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, tags: e.target.value.split(',').map(v => v.trim()).filter(Boolean)}})}
+            onChange={e => replaceProject({
+              ...selected,
+              youtube: {
+                ...selected.youtube,
+                tags: e.target.value.split(',').map(v => v.trim()).filter(Boolean)
+              }
+            })}
             onBlur={() => saveYoutube({tags: selected.youtube.tags || []})}
             placeholder="tag 1, tag 2, tag 3"
           />
@@ -743,14 +776,18 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download>
+          <a
+            className="btn-ghost"
+            href={'/api/storylab/projects/' + selected.id + '/download/metadata'}
+            download
+          >
             <FileText size={13}/> download metadata JSON
           </a>
         </div>
       </div>
-    )}
+    ) : null}
   </div>
-)}
+) : null}
       </section>
     </div>
     {loading && busyLabel === 'Analyzing story…' && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="card max-w-md w-full p-6 text-center shadow-xl"><div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-brass border-t-transparent animate-spin"></div><div className="readout text-brass">ANALYZING STORY</div><p className="text-sm text-ink mt-2">Story Lab is reading the supplied sources, extracting evidence, building insights and generating the story outline.</p><p className="text-xs text-muted mt-2">This can take a while for video/audio because transcription may run first.</p></div></div>}
