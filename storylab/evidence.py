@@ -42,6 +42,40 @@ def _claim(text: str) -> str:
     return sentence[:500]
 
 
+def _is_lyric_like(text: str) -> bool:
+    """Return True for text that looks like song/lyric material rather than dialogue.
+
+    This is deliberately conservative: ordinary short dialogue must remain
+    usable evidence. The filter targets common lyric formatting/markers,
+    repeated refrain-like text, and lines dominated by musical cues.
+    """
+    value = " ".join(text.split()).strip()
+    if not value:
+        return True
+
+    lowered = value.lower()
+    if re.search(r"(^|\s)(\[?(music|instrumental|singing|sings|song|lyrics|chorus|verse|refrain)\]?)(\s|$)", lowered):
+        return True
+    if re.search(r"(^|\s)(la+|na+|oh+|ah+|yeah+|ooh+|woo+)([!.,]?\s|$)", lowered) and len(value.split()) <= 12:
+        return True
+
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ']+", lowered)
+    if len(words) < 3:
+        return False
+
+    # Repeated short phrases are a strong signal of a refrain.
+    tokens = [word for word in words if len(word) > 1]
+    if len(tokens) >= 6:
+        half = max(3, len(tokens) // 2)
+        if " ".join(tokens[:half]) == " ".join(tokens[-half:]):
+            return True
+
+    # Lines made mostly of musical filler are not useful documentary evidence.
+    filler = {"la", "na", "oh", "ah", "ooh", "woo", "yeah", "hey"}
+    filler_count = sum(1 for word in words if word in filler)
+    return len(words) >= 4 and filler_count / len(words) >= 0.5
+
+
 def _merge_timed_segments(segments: list[TranscriptSegment], max_gap: float = 1.5, max_window: float = 18.0) -> list[TranscriptSegment]:
     """Turn subtitle/ASR cues into meaningful dialogue windows.
 
