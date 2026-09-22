@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -12,7 +13,7 @@ from .models import RenderArtifact, ReviewItem, Scene, StoryBuilder, StoryProjec
 from .renderer import render_documentary, extract_scene, mux_narration
 from .script import build_script
 from .youtube import build_youtube_package
-from .tts import generate_voiceover, prepare_narration, voicebox_profiles, voicebox_status
+from .tts import _audio_duration, _mix_audio_timeline, generate_voiceover, narration_srt, narration_text, prepare_narration, voicebox_profiles, voicebox_status
 
 
 class StoryLabStore:
@@ -593,24 +594,138 @@ class StoryLabStore:
             raise ValueError("Prepare and approve every Story Lab narration section before generating narration.")
         now = datetime.now(timezone.utc).isoformat()
         from .models import VoiceoverArtifact
+        output_dir = self.root / "voiceover" / project.id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        script_path = output_dir / "narration-script.txt"
+        timing_path = output_dir / "narration-timing.srt"
+        script_path.write_text(narration_text(project), encoding="utf-8")
+        timing_path.write_text(narration_srt(project), encoding="utf-8")
         project.voiceover = VoiceoverArtifact(
-            status="generating", provider="voicebox", profile_id=profile_id, created_at=now
+            status="generating", provider="voicebox", profile_id=profile_id,
+            script_path=str(script_path), timing_path=str(timing_path),
+            created_at=now, total_segments=len(project.script),
+            stage="queued", message="Voicebox generation queued."
         )
+        project.error = None
         self.save(project)
-        try:
-            output_dir = self.root / "voiceover" / project.id
-            script_path, timing_path, audio_path, segments = generate_voiceover(project, profile_id, output_dir)
+
+        def worker():
+            def progress(index: int, total: int, message: str):
+                try:
+                    current = self.get(project_id)
+                    if not current.voiceover or current.voiceover.provider != "voicebox":
+                        return
+                    current.voiceover.stage = "generating"
+                    current.voiceover.message = message
+                    current.voiceover.current_index = min(total, index + (1 if index < total else 0))
+                    current.voiceover.total_segments = total
+                    self.save(current)
+                except Exception:
+                    pass
+
+            try:
+                current = self.get(project_id)
+                script_path, timing_path, audio_path, segments = generate_voiceover(
+                    current, profile_id, output_dir, progress=progress
+                )
+                current = self.get(project_id)
+                current.voiceover = VoiceoverArtifact(
+                    status="generated", provider="voicebox", profile_id=profile_id,
+                    script_path=script_path, timing_path=timing_path, audio_path=audio_path,
+                    segments=segments, created_at=now, total_segments=len(segments),
+                    current_index=len(segments), stage="complete", message="Voicebox narration is ready."
+                )
+                current.error = None
+                self.save(current)
+            except Exception as exc:
+                try:
+                    current = self.get(project_id)
+                    current.voiceover = VoiceoverArtifact(
+                        status="error", provider="voicebox", profile_id=profile_id,
+                        script_path=str(script_path), timing_path=str(timing_path),
+                        error=str(exc), created_at=now, total_segments=len(current.script),
+                        stage="error", message=str(exc)
+                    )
+                    current.error = str(exc)
+                    self.save(current)
+                except Exception:
+                    pass
+
+        threading.Thread(target=worker, name=f"storylab-voicebox-{project.id}", daemon=True).start()
+        return self.get(project_id)
+
+    def upload_narration_audio(self, project_id: str, file_path: str, section_id: str | None = None, combined: bool = False) -> StoryProject:
+        project = self.get(project_id)
+        if not project.script:
+            raise ValueError("Prepare the narration script before uploading audio.")
+        source = Path(file_path).resolve()
+        if not source.is_file():
+            raise FileNotFoundError(file_path)
+        output_dir = self.root / "voiceover" / project.id
+        section_dir = output_dir / "sections"
+        section_dir.mkdir(parents=True, exist_ok=True)
+        suffix = source.suffix.lower() or ".wav"
+
+        if combined:
+            destination = output_dir / f"manual-combined{suffix}"
+            shutil.copy2(source, destination)
+            duration = _audio_duration(destination)
+            from .models import VoiceoverArtifact, VoiceoverSegment
+            segment = VoiceoverSegment(
+                section_id="__combined__",
+                start_seconds=0,
+                end_seconds=round(duration, 3),
+                audio_path=str(destination),
+                text=" ".join(section.narration.strip() for section in project.script),
+            )
+            script_path = output_dir / "narration-script.txt"
+            timing_path = output_dir / "narration-timing.srt"
+            script_path.write_text(narration_text(project), encoding="utf-8")
             project.voiceover = VoiceoverArtifact(
-                status="generated", provider="voicebox", profile_id=profile_id,
-                script_path=script_path, timing_path=timing_path, audio_path=audio_path,
-                segments=segments, created_at=now,
+                status="manual", provider="manual", profile_id=None,
+                script_path=str(script_path), timing_path=str(timing_path),
+                audio_path=str(destination), segments=[segment],
+                created_at=datetime.now(timezone.utc).isoformat(),
+                stage="manual", message="Combined narration audio uploaded."
             )
             project.error = None
-        except Exception as exc:
-            project.voiceover = VoiceoverArtifact(
-                status="error", provider="voicebox", profile_id=profile_id, error=str(exc), created_at=now
-            )
-            project.error = str(exc)
+            return self.save(project)
+
+        if not section_id or not any(section.id == section_id for section in project.script):
+            raise ValueError("Choose a narration section for an individual audio upload.")
+        section = next(section for section in project.script if section.id == section_id)
+        destination = section_dir / f"{section.id}{suffix}"
+        shutil.copy2(source, destination)
+        duration = _audio_duration(destination)
+        from .models import VoiceoverArtifact, VoiceoverSegment
+        from .tts import _visual_section_starts
+        starts = _visual_section_starts(project)
+        existing = [] if not project.voiceover else list(project.voiceover.segments)
+        existing = [item for item in existing if item.section_id not in {section_id, "__combined__"}]
+        existing.append(VoiceoverSegment(
+            section_id=section_id,
+            start_seconds=round(starts.get(section_id, 0), 3),
+            end_seconds=round(starts.get(section_id, 0) + duration, 3),
+            audio_path=str(destination),
+            text=section.narration.strip(),
+        ))
+        existing.sort(key=lambda item: item.start_seconds)
+        mix_path = output_dir / "narration-manual-mixed.wav"
+        _mix_audio_timeline(existing, mix_path)
+        script_path = output_dir / "narration-script.txt"
+        timing_path = output_dir / "narration-timing.srt"
+        script_path.write_text(narration_text(project), encoding="utf-8")
+        timing_path.write_text(narration_srt(project, existing), encoding="utf-8")
+        complete = all(any(item.section_id == item_section.id for item in existing) for item_section in project.script)
+        project.voiceover = VoiceoverArtifact(
+            status="manual", provider="manual",
+            script_path=str(script_path), timing_path=str(timing_path),
+            audio_path=str(mix_path), segments=existing,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            current_index=len(existing), total_segments=len(project.script),
+            stage="manual", message=f"Uploaded audio for {len(existing)} of {len(project.script)} narration sections."
+        )
+        project.error = None if complete else f"Manual narration is incomplete: {len(existing)}/{len(project.script)} sections uploaded."
         return self.save(project)
 
     def render(self, project_id: str) -> StoryProject:
@@ -626,7 +741,7 @@ class StoryLabStore:
                 raise ValueError("Renderer produced no video because no selected source clips were available.")
             project.youtube = build_youtube_package(project)
             artifact.status = "rendered"; artifact.output_path = result.output_path; artifact.manifest_path = result.manifest_path
-            if project.voiceover and project.voiceover.status == "generated" and project.voiceover.audio_path:
+            if project.voiceover and project.voiceover.status in {"generated", "manual"} and project.voiceover.audio_path:
                 voiced_video = Path(result.output_path).with_name("storylab-final-voiceover.mp4")
                 mux_narration(result.output_path, project.voiceover.audio_path, str(voiced_video))
                 artifact.output_path = str(voiced_video)
