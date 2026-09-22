@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Film, Plus, Sparkles, Clock3, BookOpen, Lightbulb, CheckCircle2, FileText, Clapperboard, HelpCircle, X, Copy, Check } from 'lucide-react';
+import {
+  Film, Plus, Sparkles, Clock3, BookOpen, Lightbulb, CheckCircle2,
+  FileText, Clapperboard, HelpCircle, X, ChevronRight, ChevronLeft,
+  PlayCircle, Check, Circle, Upload, MessageSquareQuestion
+} from 'lucide-react';
 import { apiJson } from '../lib/api';
 
 const kinds = ['movie', 'series', 'anime', 'episode', 'documentary', 'other'];
@@ -17,9 +21,27 @@ const angles = [
   ['documentary', 'Documentary'],
 ];
 
+const steps = [
+  ['sources', '1', 'Sources', 'Build the complete source story'],
+  ['angle', '2', 'Question / Why', 'Choose what the film should answer'],
+  ['build', '3', 'Build Story', 'Script + evidence + actual clips'],
+  ['narration', '4', 'Narration', 'Prepare and approve the voiceover'],
+  ['final', '5', 'Final Video', 'Assemble and render'],
+];
+
+const formatTime = (seconds) => {
+  if (seconds == null || Number.isNaN(Number(seconds))) return '—';
+  const total = Math.max(0, Math.round(Number(seconds)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+};
+
 export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', managed = false }) {
   const [projects, setProjects] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [workflowStep, setWorkflowStep] = useState('sources');
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState('movie');
   const [angle, setAngle] = useState('story');
@@ -33,79 +55,160 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   const [helpOpen, setHelpOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-  const [sceneQuery, setSceneQuery] = useState('');
-  const [sceneSearchMode, setSceneSearchMode] = useState('hybrid');
-  const [sceneEmbeddingProvider, setSceneEmbeddingProvider] = useState('local');
-  const [storyDraft, setStoryDraft] = useState(null);
-  const [storyDirty, setStoryDirty] = useState(false);
-  const [youtubeDirty, setYoutubeDirty] = useState(false);
   const [sourceMessage, setSourceMessage] = useState('');
   const [analysisMessage, setAnalysisMessage] = useState('');
-  const [copiedMetadata, setCopiedMetadata] = useState('');
   const [voiceboxProfiles, setVoiceboxProfiles] = useState([]);
   const [voiceboxAvailable, setVoiceboxAvailable] = useState(false);
   const [voiceboxLoading, setVoiceboxLoading] = useState(false);
   const [voiceProfileId, setVoiceProfileId] = useState('');
 
-  const replaceProject = (project) => { setSelected(project); setProjects(prev => prev.map(p => p.id === project.id ? project : p)); };
+  const replaceProject = (project) => {
+    setSelected(project);
+    setProjects(prev => prev.map(p => p.id === project.id ? project : p));
+  };
 
   const load = async () => {
-    try { const data = await apiJson('/api/storylab/projects'); setProjects(data.projects || []); }
-    catch (e) { setError(e.message || 'Could not load Story Lab projects.'); }
+    try {
+      const data = await apiJson('/api/storylab/projects');
+      setProjects(data.projects || []);
+    } catch (e) {
+      setError(e.message || 'Could not load Story Lab projects.');
+    }
   };
+
   useEffect(() => { load(); }, []);
+
   useEffect(() => {
     if (selected?.script?.length) loadVoicebox();
   }, [selected?.id, selected?.script?.length]);
+
   useEffect(() => {
-    if (selected?.analysis?.story) {
-      setStoryDraft(selected.analysis.story);
-      setStoryDirty(false);
-    }
-  }, [selected?.id, selected?.analysis?.story]);
+    if (!selected) return;
+    if (!selected.analysis) setWorkflowStep('sources');
+  }, [selected?.id]);
 
   const create = async () => {
     if (!title.trim()) return;
-    setCreating(true); setError('');
+    setCreating(true);
+    setError('');
     try {
-      const project = await apiJson('/api/storylab/projects', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({title: title.trim(), kind, brief: {angle, question}}) });
-      setProjects(prev => [project, ...prev]); setSelected(project); setTitle(''); setQuestion('');
-    } catch (e) { setError(e.message || 'Could not create project.'); }
-    finally { setCreating(false); }
+      const project = await apiJson('/api/storylab/projects', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          title: title.trim(),
+          kind,
+          brief: { angle: 'story', question: '' }
+        })
+      });
+      setProjects(prev => [project, ...prev]);
+      setSelected(project);
+      setWorkflowStep('sources');
+      setTitle('');
+      setQuestion('');
+      setAngle('story');
+    } catch (e) {
+      setError(e.message || 'Could not create project.');
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const analyze = async () => {
+  const analyzeSources = async () => {
     if (!selected) return;
-    setLoading(true); setBusyLabel('Analyzing story…'); setError('');
+    setLoading(true);
+    setBusyLabel('Analyzing sources…');
+    setError('');
     try {
-      const project = await apiJson('/api/storylab/projects/' + selected.id + '/analyze', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ transcript }) });
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ transcript: '' })
+      });
       replaceProject(project);
-      setAnalysisMessage('Analysis completed successfully. Story Intelligence and Story Builder are ready to review.');
-    } catch (e) { setError(e.message || 'Analysis failed.'); setAnalysisMessage(''); }
-    finally { setLoading(false); }
+      setAnalysisMessage('Complete source analysis is ready. Now choose the question or theory that should drive the documentary.');
+      setWorkflowStep('angle');
+    } catch (e) {
+      setError(e.message || 'Source analysis failed.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
   };
 
   const uploadSource = async () => {
     if (!selected || !upload) return;
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
     try {
-      const body = new FormData(); body.append('file', upload);
-      const project = await apiJson('/api/storylab/projects/' + selected.id + '/sources/upload?transcribe=' + String(transcribe), { method:'POST', body });
+      const body = new FormData();
+      body.append('file', upload);
+      const project = await apiJson(
+        '/api/storylab/projects/' + selected.id + '/sources/upload?transcribe=' + String(transcribe),
+        { method: 'POST', body }
+      );
       replaceProject(project);
       const source = project.sources?.[project.sources.length - 1];
-      const sourceLabel = source?.ingestion_source === 'embedded_english_subtitles' ? 'English subtitles detected and used.' : 'Source uploaded successfully.';
-      setSourceMessage(source ? `${sourceLabel} ${source.name}` : sourceLabel);
+      setSourceMessage(source
+        ? `${source.ingestion_source === 'embedded_english_subtitles' ? 'English subtitles detected and used. ' : ''}${source.name} added.`
+        : 'Source uploaded successfully.');
       setUpload(null);
-    } catch (e) { setError(e.message || 'Could not upload source.'); setSourceMessage(''); }
-    finally { setLoading(false); }
+    } catch (e) {
+      setError(e.message || 'Could not upload source.');
+      setSourceMessage('');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const addTextSource = async () => {
     if (!selected || !transcript.trim()) return;
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/sources/text', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: transcript.includes('-->') ? 'pasted-source.srt' : 'pasted-source.txt', text: transcript}) })); setTranscript(''); }
-    catch (e) { setError(e.message || 'Could not add source text.'); }
-    finally { setLoading(false); }
+    setLoading(true);
+    setError('');
+    try {
+      const name = transcript.includes('-->') ? 'pasted-source.srt' : 'pasted-source.txt';
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/sources/text', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, text: transcript})
+      }));
+      setTranscript('');
+      setSourceMessage('Text/transcript source added.');
+    } catch (e) {
+      setError(e.message || 'Could not add source text.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const buildStory = async () => {
+    if (!selected) return;
+    if (!question.trim() && angle === 'story') {
+      setError('Choose an angle or enter the central question before building the story.');
+      return;
+    }
+    setLoading(true);
+    setBusyLabel('Building story…');
+    setError('');
+    try {
+      await apiJson('/api/storylab/projects/' + selected.id + '/brief', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ ...(selected.brief || {}), angle, question: question.trim() })
+      });
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ transcript: '' })
+      });
+      replaceProject(project);
+      setWorkflowStep('build');
+    } catch (e) {
+      setError(e.message || 'Could not build the story.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
   };
 
   const loadVoicebox = async () => {
@@ -129,846 +232,756 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
 
   const generateVoiceover = async () => {
     if (!selected || !voiceProfileId) return;
-    setLoading(true); setBusyLabel('Generating narration…'); setError('');
+    setLoading(true);
+    setBusyLabel('Preparing narration…');
+    setError('');
     try {
       replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/voiceover', {
-        method:'POST', headers:{'Content-Type':'application/json'},
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({profile_id: voiceProfileId})
       }));
-    } catch (e) { setError(e.message || 'Voiceover generation failed.'); }
-    finally { setLoading(false); setBusyLabel(''); }
+      setWorkflowStep('final');
+    } catch (e) {
+      setError(e.message || 'Voiceover generation failed.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
   };
 
-  const evidenceStatus = (evidenceId) => selected?.reviews?.find(r => r.target_type === 'evidence' && r.target_id === evidenceId)?.status || 'pending';
-  const insightStatus = (insightId) => selected?.reviews?.find(r => r.target_type === 'insight' && r.target_id === insightId)?.status || 'pending';
+  const approveSection = async (section, approved = true) => {
+    if (!selected) return;
+    setLoading(true);
+    setError('');
+    try {
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/review', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          target_type: 'script',
+          target_id: section.id,
+          status: approved ? 'approved' : 'changes_requested'
+        })
+      }));
+    } catch (e) {
+      setError(e.message || 'Could not update script approval.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectScene = async (sceneId, checked) => {
+    if (!selected) return;
+    setLoading(true);
+    setError('');
+    try {
+      const ids = (selected.scenes || [])
+        .filter(scene => scene.selected !== false && scene.id !== sceneId)
+        .map(scene => scene.id);
+      if (checked) ids.push(sceneId);
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/select', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({scene_ids: ids})
+      }));
+    } catch (e) {
+      setError(e.message || 'Could not update clip selection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const extractScenes = async (sceneIds) => {
+    if (!selected || !sceneIds?.length) return;
+    setLoading(true);
+    setError('');
+    try {
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/extract', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({scene_ids: sceneIds})
+      }));
+    } catch (e) {
+      setError(e.message || 'Could not extract source clips.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const render = async () => {
+    if (!selected) return;
+    setLoading(true);
+    setBusyLabel('Rendering final video…');
+    setError('');
+    try {
+      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/render', {method: 'POST'}));
+    } catch (e) {
+      setError(e.message || 'Render failed.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
+  };
+
+  const allScriptApproved = Boolean(selected?.script?.length && selected.script.every(section => section.approved));
+  const selectedClips = (selected?.scenes || []).filter(scene => scene.selected !== false);
+  const extractedClips = selectedClips.filter(scene => scene.extraction_status === 'extracted' && scene.output_file);
 
   const evidenceById = (ids = []) => {
     const lookup = Object.fromEntries((selected?.analysis?.evidence || []).map(item => [item.id, item]));
     return [...new Set(ids)].map(id => lookup[id]).filter(Boolean);
   };
 
-  const curatedEvidenceIds = () => {
-    const story = selected?.analysis?.story;
-    if (!story) return [];
-    const groups = [
-      story.hook_evidence_ids, story.context_evidence_ids, story.conflict_evidence_ids,
-      story.consequences_evidence_ids, story.significance_evidence_ids,
-      story.central_question_evidence_ids, story.interpretation_evidence_ids,
-      ...(story.timeline_evidence_ids || []), ...(story.key_event_evidence_ids || []),
-      ...(story.people_evidence_ids || []), ...(story.counterpoint_evidence_ids || []),
-      ...(story.open_question_evidence_ids || [])
-    ];
-    return [...new Set(groups.flat().filter(Boolean))];
+  const scenesForSection = (section) => {
+    const wanted = new Set(section.scene_ids || []);
+    return (selected?.scenes || []).filter(scene => wanted.has(scene.id));
   };
 
-  const curatedInsights = () => {
-    const insights = selected?.analysis?.insights || [];
-    const story = selected?.analysis?.story;
-    const ids = new Set(story ? Object.values(story.component_insight_ids || {}).flat() : []);
-    return ids.size ? insights.filter(item => ids.has(item.id)) : insights;
-  };
+  const allEvidence = selected?.analysis?.evidence || [];
+  const story = selected?.analysis?.story;
+  const insights = selected?.analysis?.insights || [];
 
-  const sceneById = (ids = []) => {
-    const lookup = Object.fromEntries((selected?.scenes || []).map(scene => [scene.id, scene]));
-    return ids.map(id => lookup[id]).filter(Boolean);
-  };
-
-  const reviewEvidence = async (evidence, status) => {
-    setLoading(true); setError('');
-    try {
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/review', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({target_type:evidence.type ? 'insight' : 'evidence', target_id:evidence.id, status})
-      }));
-    } catch (e) { setError(e.message || 'Could not update evidence review.'); }
-    finally { setLoading(false); }
-  };
-
-  const review = async (section) => {
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/review', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_type:'script', target_id:section.id, status:'approved'}) })); }
-    catch (e) { setError(e.message || 'Could not approve section.'); }
-    finally { setLoading(false); }
-  };
-
-  const reviewVisual = async (visual) => {
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/visual-review', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_type:'visual', target_id:visual.id, status:'approved'}) })); }
-    catch (e) { setError(e.message || 'Could not approve visual research item.'); }
-    finally { setLoading(false); }
-  };
-
-  const saveBrief = async (patch) => {
+  const goTo = (step) => {
     if (!selected) return;
-    setLoading(true); setError('');
-    try {
-      const brief = {...(selected.brief || {}), ...patch};
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/brief', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(brief)
-      }));
-    } catch (e) { setError(e.message || 'Could not update story brief.'); }
-    finally { setLoading(false); }
+    if (step === 'angle' && !selected.analysis) return;
+    if (step === 'build' && !selected.script?.length) return;
+    if (step === 'narration' && !selected.script?.length) return;
+    if (step === 'final' && !allScriptApproved) return;
+    setWorkflowStep(step);
   };
 
-  const searchScenes = async (query = '') => {
-    if (!selected) return;
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/search', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query, search_mode: sceneSearchMode, embedding_provider: sceneEmbeddingProvider, max_results: 12})})); }
-    catch (e) { setError(e.message || 'Could not search scenes.'); }
-    finally { setLoading(false); }
-  };
+  const stepIndex = Math.max(0, steps.findIndex(item => item[0] === workflowStep));
 
-  const selectScene = async (sceneId, checked) => {
-    if (!selected) return;
-    setLoading(true); setError('');
-    try {
-      const ids = (selected.scenes || []).filter(s => s.selected !== false && s.id !== sceneId).map(s => s.id);
-      if (checked) ids.push(sceneId);
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/select', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scene_ids: ids})
-      }));
-    } catch (e) { setError(e.message || 'Could not update scene selection.'); }
-    finally { setLoading(false); }
-  };
-
-  const extractScenes = async (sceneIds = null) => {
-    if (!selected) return;
-    const ids = sceneIds || (selected.scenes||[]).filter(s=>s.extraction_status==='candidate').map(s=>s.id);
-    if (!ids.length) return;
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/extract', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene_ids:ids})})); }
-    catch (e) { setError(e.message || 'Could not extract scenes.'); }
-    finally { setLoading(false); }
-  };
-
-  const saveYoutube = async (patch) => {
-    if (!selected) return;
-    setLoading(true); setError('');
-    try {
-      const youtube = {...(selected.youtube || {}), ...patch};
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/youtube', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(youtube)
-      }));
-      setYoutubeDirty(false);
-    } catch (e) { setError(e.message || 'Could not save YouTube metadata.'); }
-    finally { setLoading(false); }
-  };
-
-  const copyMetadata = async (key, value) => {
-    try {
-      await navigator.clipboard.writeText(value || '');
-      setCopiedMetadata(key);
-      window.setTimeout(() => setCopiedMetadata(''), 1600);
-    } catch (e) {
-      setError('Could not copy to clipboard. You can still select and copy the text manually.');
-    }
-  };
-
-  const copyAllMetadata = async () => {
-    const youtube = selected?.youtube || {};
-    const payload = [
-      'TITLE',
-      youtube.title || '',
-      '',
-      'DESCRIPTION',
-      youtube.description || '',
-      '',
-      'TAGS',
-      (youtube.tags || []).join(', ')
-    ].join('\n');
-    await copyMetadata('all', payload);
-  };
-
-  const updateStoryField = (field, value) => {
-    setStoryDraft(prev => ({ ...(prev || {}), [field]: value }));
-    setStoryDirty(true);
-  };
-
-  const scenesForEvidence = (evidenceIds = []) => {
-    const wanted = new Set(evidenceIds || []);
-    return (selected?.scenes || []).filter(scene =>
-      (scene.evidence_ids || []).some(id => wanted.has(id))
-    );
-  };
-
-  const saveStory = async () => {
-    if (!selected || !storyDraft) return;
-    setLoading(true); setError('');
-    try {
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/story', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(storyDraft)
-      }));
-      setStoryDirty(false);
-    } catch (e) { setError(e.message || 'Could not save story builder.'); }
-    finally { setLoading(false); }
-  };
-
-  const render = async () => {
-    setLoading(true); setError('');
-    try { replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/render', { method:'POST' })); }
-    catch (e) { setError(e.message || 'Render failed.'); }
-    finally { setLoading(false); }
-  };
-
-  return <div className="space-y-6 animate-fade">
-    <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-      <div><p className="eyebrow">09 · STORY LAB</p><h1 className="font-display lowercase text-3xl sm:text-4xl text-ink">Story Lab</h1><p className="text-sm text-muted mt-2 max-w-2xl">Analyze films, series and anime, connect theories to evidence, and turn the findings into documentary-ready stories.</p></div>
-      <div className="flex items-center gap-2"><button type="button" className="btn-ghost text-xs" onClick={()=>setHelpOpen(true)}><HelpCircle size={14}/> how Story Lab works</button><div className="flex items-center gap-2 text-xs text-muted"><Film size={15}/> long-form analysis</div></div>
-    </div>
-    <div className="grid lg:grid-cols-[280px_1fr] gap-4">
-      <section className="card p-4 space-y-3">
-        <div className="flex items-center justify-between"><span className="readout">PROJECTS</span><button className="btn-ghost" onClick={()=>setSelected(null)} title="new project"><Plus size={14}/></button></div>
-        {projects.length === 0 ? <p className="text-xs text-muted py-5">No Story Lab projects yet.</p> : projects.map(p => <div key={p.id} className={`flex items-stretch gap-1 rounded-input border transition-colors ${selected?.id===p.id?'border-brass bg-paper3':'border-rule hover:bg-paper3/60'}`}>
-          <button onClick={()=>setSelected(p)} className="flex-1 min-w-0 text-left p-3">
-            <div className="text-sm text-ink truncate">{p.title}</div><div className="text-[11px] text-muted mt-1">{p.kind} · {p.status}</div>
-          </button>
-          <button type="button" className="px-2 text-muted hover:text-warn" title={`Delete ${p.title}`} aria-label={`Delete ${p.title}`} onClick={async (e)=>{
-            e.stopPropagation();
-            if (!window.confirm(`Delete “${p.title}”? This will permanently remove its sources, scenes, renders and analysis.`)) return;
-            setLoading(true); setError('');
-            try {
-              await apiJson('/api/storylab/projects/' + p.id, { method:'DELETE' });
-              setProjects(prev => prev.filter(item => item.id !== p.id));
-              if (selected?.id === p.id) setSelected(null);
-            } catch (err) { setError(err.message || 'Could not delete project.'); }
-            finally { setLoading(false); }
-          }}><X size={14}/></button>
-        </div>)}
-      </section>
-      <section className="card p-5 sm:p-6">
-        {!selected ? <div className="max-w-xl space-y-5"><div><div className="flex items-center gap-2 text-brass"><Sparkles size={16}/><span className="readout">NEW STORY</span></div><h2 className="font-display lowercase text-2xl text-ink mt-2">Start an analysis</h2></div><div className="grid sm:grid-cols-[1fr_150px] gap-3"><input className="input-field" placeholder="Movie, series, anime or story title" value={title} onChange={e=>setTitle(e.target.value)} onKeyDown={e=>e.key==='Enter'&&create()}/><select className="input-field" value={kind} onChange={e=>setKind(e.target.value)}>{kinds.map(k=><option key={k}>{k}</option>)}</select></div><div className="grid sm:grid-cols-2 gap-3"><select className="input-field" value={angle} onChange={e=>setAngle(e.target.value)}>{angles.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><input className="input-field" placeholder="Optional question: Why did this happen?" value={question} onChange={e=>setQuestion(e.target.value)}/></div><button className="btn-primary" disabled={!title.trim()||creating} onClick={create}>{creating?'creating…':'create project'}</button></div> : <div className="space-y-6"><div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3"><div><p className="readout">{selected.kind.toUpperCase()} · {selected.status.toUpperCase()}</p><h2 className="font-display lowercase text-2xl text-ink mt-1">{selected.title}</h2></div><button className="btn-primary" disabled={loading} onClick={analyze}>{loading && busyLabel === 'Analyzing story…' ? 'analyzing…' : 'analyze story'}</button></div><div><div className="flex items-center justify-between mb-2"><label className="readout block">SOURCE TEXT OR TRANSCRIPT</label><span className="text-[10px] text-muted">Add text/transcript or upload media, then click Analyze Story</span></div><textarea className="input-field min-h-48 w-full resize-y" placeholder="Paste plain text or SRT/VTT source text. Timestamped text becomes exact evidence; plain text remains explicitly unlocated." value={transcript} onChange={e=>setTranscript(e.target.value)}/><div className="flex gap-2 mt-2"><button className="btn-ghost" disabled={loading||!transcript.trim()} onClick={addTextSource}><FileText size={14}/> add as source</button><span className="text-xs text-muted self-center">{selected.sources?.length || 0} source(s) attached</span></div>
-{sourceMessage && <div className="mt-3 rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-ink2"><CheckCircle2 size={14} className="inline mr-2 text-emerald-600"/>{sourceMessage}</div>}
-{selected.sources?.length > 0 && <div className="mt-3 space-y-1">{selected.sources.map(source => <div key={source.id} className="flex items-center justify-between gap-3 rounded border border-rule px-3 py-2 text-[11px]"><span className="truncate text-ink2">{source.name}</span><span className="text-muted whitespace-nowrap">{source.ingestion_source === 'embedded_english_subtitles' ? 'English subtitles used' : source.ingestion_source === 'local_asr' ? 'local ASR' : source.ingestion_source?.replaceAll('_',' ')}</span></div>)}</div>}<div className="mt-4 rounded-input border border-rule p-3 space-y-3"><div className="rounded border border-brass/30 bg-paper3 p-3"><div className="flex items-center gap-2 text-xs text-brass uppercase tracking-wide"><Sparkles size={13}/> Recommended workflow</div><p className="text-xs text-muted mt-2 leading-relaxed">Create the project → add source text/transcript or upload video/audio → click <strong>Analyze Story</strong> → review Story Intelligence → edit the generated Story Builder only where needed → save it → review/approve script sections → select scenes → render.</p></div>
-  <div className="flex items-center justify-between gap-3">
-    <label className="readout block">UPLOAD SOURCE</label>
-    <span className="text-[10px] text-muted text-right">Video: MP4, MKV, MOV, AVI, WebM, M4V · Audio: MP3, WAV, M4A, AAC, FLAC, OGG · Documents: PDF, SRT, VTT, TXT, MD, JSON</span>
-  </div>
-  <label
-    htmlFor="storylab-source-file"
-    className="relative block rounded-input border border-dashed border-rule p-6 text-center cursor-pointer hover:border-brass transition-colors"
-    onDragOver={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.classList.add('border-brass')}}
-    onDragLeave={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.classList.remove('border-brass')}}
-    onDrop={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.classList.remove('border-brass');const file=e.dataTransfer.files?.[0];if(file&&!loading)setUpload(file)}}
-  >
-    <input
-      id="storylab-source-file"
-      ref={fileInputRef}
-      type="file"
-      accept=".mp4,.mkv,.mov,.avi,.webm,.m4v,.mp3,.wav,.m4a,.aac,.flac,.ogg,.pdf,.srt,.vtt,.txt,.md,.json,video/*,audio/*,application/pdf,text/plain,text/markdown,application/json"
-      onChange={e=>{const file=e.target.files?.[0];if(file)setUpload(file)}}
-      disabled={loading}
-      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-    />
-    <div className="flex justify-center mb-2"><Plus size={22}/></div>
-    <p className="text-sm text-ink2">{upload ? 'File selected — click here to change it' : 'Click to choose a file or drag it here'}</p>
-    <p className="text-[11px] text-muted mt-1">{upload ? upload.name : 'MKV and other supported video/audio files are accepted'}</p>
-  </label>
-  <div className="flex flex-wrap items-center gap-3">
-    <label className="text-xs text-muted flex items-center gap-2">
-      <input type="checkbox" checked={transcribe} onChange={e=>setTranscribe(e.target.checked)}/> transcribe video/audio with local ASR
-    </label>
-    <button type="button" className="btn-ghost" disabled={loading||!upload} onClick={uploadSource}><FileText size={14}/> upload source</button>
-    {upload && <button type="button" className="btn-ghost" disabled={loading} onClick={()=>{setUpload(null);if(fileInputRef.current)fileInputRef.current.value='';}}>clear</button>}
-  </div>
-  <p className="text-[11px] text-muted">The file picker is a real browser file input covering the drop zone, so clicking the + area opens the system file finder.</p>
-</div></div>{analysisMessage && selected.analysis && <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-ink2"><CheckCircle2 size={14} className="inline mr-2 text-emerald-600"/>{analysisMessage}</div>}
-{selected.analysis && <div className="grid md:grid-cols-2 gap-4"><div className="rounded-input border border-rule p-4"><div className="flex items-center gap-2 text-brass mb-2"><BookOpen size={15}/><span className="readout">STORY</span></div><p className="text-sm text-ink2 leading-relaxed">{selected.analysis.summary}</p><p className="text-xs text-muted mt-2">Lens: {selected.brief?.angle || 'story'}{selected.brief?.question ? ' · '+selected.brief.question : ''}</p>
-<div className="mt-4 rounded-input border border-rule p-3">
-  <div className="flex items-center justify-between mb-2"><span className="readout">STORY BRIEF</span><span className="text-[10px] text-muted">controls the next analysis</span></div>
-  <div className="grid sm:grid-cols-2 gap-2">
-    <select className="input-field" value={selected.brief?.angle || 'story'} onChange={e=>saveBrief({angle:e.target.value})}>{angles.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
-    <select className="input-field" value={selected.brief?.spoiler_policy || 'light'} onChange={e=>saveBrief({spoiler_policy:e.target.value})}><option value="none">No spoilers</option><option value="light">Light spoilers</option><option value="full">Full spoilers</option></select>
-  </div>
-  <input className="input-field w-full mt-2" placeholder="Central question" value={selected.brief?.question || ''} onChange={e=>replaceProject({...selected,brief:{...(selected.brief||{}),question:e.target.value}})} onBlur={e=>saveBrief({question:e.target.value})}/>
-  <div className="grid sm:grid-cols-2 gap-2 mt-2">
-    <input className="input-field" placeholder="Audience (optional)" value={selected.brief?.audience || ''} onChange={e=>replaceProject({...selected,brief:{...(selected.brief||{}),audience:e.target.value}})} onBlur={e=>saveBrief({audience:e.target.value})}/>
-    <input className="input-field" placeholder="Tone (e.g. analytical)" value={selected.brief?.tone || 'clear'} onChange={e=>replaceProject({...selected,brief:{...(selected.brief||{}),tone:e.target.value}})} onBlur={e=>saveBrief({tone:e.target.value})}/>
-  </div>
-</div><p className="text-xs text-muted mt-3">{selected.analysis.story?.conflict}</p></div><div className="rounded-input border border-rule p-4"><div className="flex items-center gap-2 text-brass mb-2"><Lightbulb size={15}/><span className="readout">THEORY / WHY ANGLE</span></div><p className="text-xs text-muted">This is the explanation the finished video should answer—not a plot recap.</p>{selected.brief?.question && <div className="mt-3 rounded border border-brass/30 bg-paper3 p-3"><div className="text-[10px] uppercase tracking-wide text-brass">CENTRAL QUESTION</div><p className="text-sm text-ink mt-1">{selected.brief.question}</p></div>}{selected.analysis?.theories?.length ? <div className="mt-3 space-y-2">{selected.analysis.theories.map(theory=><div key={theory.id} className="rounded border border-rule p-3"><div className="text-xs font-medium text-ink">{theory.title}</div><p className="text-xs text-ink2 mt-1 leading-relaxed">{theory.claim}</p><div className="text-[10px] text-muted mt-2">{theory.evidence_ids?.length || 0} evidence link(s) · confidence {Math.round((theory.confidence || 0)*100)}%</div></div>)}</div> : <p className="text-xs text-muted mt-3">No explicit theory was generated yet. Use the Theory / clues angle and a precise question, then analyze again.</p>}</div></div>}
-{selected.analysis && storyDraft && <div className="space-y-3"><div className="rounded border border-brass/30 bg-paper3 p-3 mb-3"><div className="text-xs uppercase tracking-wide text-brass">HOW TO USE STORY BUILDER</div><p className="text-xs text-muted mt-2 leading-relaxed">Story Builder is the editable narrative draft created from your evidence and insights. You normally do not write it from scratch. Read the generated hook, context, conflict, consequences, significance and interpretation; correct or refine wording when needed, keep claims grounded in the linked evidence, then click <strong>save story</strong>. The saved story automatically rebuilds the script and reconnects relevant source scenes.</p></div>
-  <div className="flex items-center justify-between">
-    <div><span className="readout">STORY BUILDER</span><div className="text-[11px] text-muted mt-1">Editable story claims with insight → evidence → scene provenance.</div></div>
-    <button className="btn-primary" disabled={loading || !storyDirty} onClick={saveStory}>{loading ? 'saving…' : storyDirty ? 'save story' : 'saved'}</button>
-  </div>
-  <div className="grid md:grid-cols-2 gap-3">
-    {[
-      ['central_question','Central question'],
-      ['hook','Hook'],
-      ['context','Context'],
-      ['conflict','Conflict'],
-      ['consequences','Consequences'],
-      ['significance','Significance'],
-      ['interpretation','Interpretation']
-    ].map(([field,label]) => {
-      const ids = storyDraft.component_insight_ids?.[field] || [];
-      const evidenceIds = storyDraft[field+'_evidence_ids'] || [];
-      const insights = (selected.analysis.insights || []).filter(i => ids.includes(i.id));
-      const scenes = scenesForEvidence(evidenceIds);
-      return <div key={field} className="rounded-input border border-rule p-3">
-        <div className="text-xs uppercase tracking-wide text-brass">{label}</div>
-        <textarea className="input-field w-full mt-2 min-h-24 resize-y" value={storyDraft[field] || ''} onChange={e=>updateStoryField(field,e.target.value)} />
-        <div className="flex flex-wrap gap-1 mt-2">
-          {insights.map(i => <span key={i.id} className="text-[10px] rounded border border-brass/40 px-1.5 py-0.5 text-muted">{i.type} · {i.title}</span>)}
-          {evidenceById(evidenceIds).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'} · evidence</span>)}
-          {scenes.map(scene => <span key={scene.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">scene · {scene.start.toFixed(1)}s</span>)}
+  return (
+    <div className="space-y-6 animate-fade">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow">09 · STORY LAB</p>
+          <h1 className="font-display lowercase text-3xl sm:text-4xl text-ink">Story Lab</h1>
+          <p className="text-sm text-muted mt-2 max-w-3xl">
+            Analyze the source first. Choose the question second. Then build a documentary from
+            evidence and real playable source clips — not visual placeholders.
+          </p>
         </div>
-      </div>;
-    })}
-  </div>
-  <div className="grid md:grid-cols-3 gap-3">
-    {[
-      ['timeline','Timeline', storyDraft.timeline || []],
-      ['key_events','Key events', storyDraft.key_events || []],
-      ['people','People / relationships', storyDraft.people || []],
-      ['counterpoints','Counterpoints', storyDraft.counterpoints || []],
-      ['open_questions','Open questions', storyDraft.open_questions || []]
-    ].map(([field,label,items]) => {
-      const ids = storyDraft.component_insight_ids?.[field] || [];
-      const evidenceGroups = storyDraft[field+'_evidence_ids'] || [];
-      const flatEvidence = Array.isArray(evidenceGroups) && evidenceGroups.every(x=>Array.isArray(x)) ? evidenceGroups.flat() : evidenceGroups;
-      return <div key={field} className="rounded-input border border-rule p-3">
-        <div className="text-xs uppercase tracking-wide text-brass">{label}</div>
-        <textarea className="input-field w-full mt-2 min-h-28 resize-y" value={(items || []).join('\n')} onChange={e=>updateStoryField(field,e.target.value.split('\n').map(v=>v.trim()).filter(Boolean))} />
-        <div className="flex flex-wrap gap-1 mt-2">
-          {(selected.analysis.insights || []).filter(i=>ids.includes(i.id)).map(i=><span key={i.id} className="text-[10px] rounded border border-brass/40 px-1.5 py-0.5 text-muted">{i.type} · {i.title}</span>)}
-          {evidenceById(flatEvidence).map(e=><span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">evidence · {e.id.slice(-6)}</span>)}
-        </div>
-      </div>;
-    })}
-  </div>
-</div>}
-{selected.analysis?.insights?.length>0 && <div className="space-y-3">
-  <div className="flex items-center justify-between"><span className="readout">STORY INTELLIGENCE</span><span className="text-[11px] text-muted">{selected.analysis.insights.length} reviewable insight(s)</span></div>
-  <div className="grid md:grid-cols-2 gap-3">
-    {selected.analysis.insights.map(insight => {
-      const reviewStatus = insightStatus(insight.id);
-      const status = reviewStatus === 'pending' ? (insight.status || 'unreviewed') : reviewStatus;
-      return <div key={insight.id} className="rounded-input border border-rule p-3">
-        <div className="flex items-center justify-between gap-2"><div className="text-xs uppercase tracking-wide text-brass">{insight.type}</div><span className="text-[10px] uppercase text-muted">{status}</span></div>
-        <div className="text-sm text-ink mt-1">{insight.title}</div>
-        <p className="text-sm text-ink2 mt-1 leading-relaxed">{insight.text}</p>
-        <div className="flex flex-wrap gap-1 mt-2">{evidenceById(insight.evidence_ids || []).map(e => <span key={e.id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{e.page ? 'p.'+e.page : e.start != null ? e.start.toFixed(1)+'s' : 'source'} · {e.id.slice(-6)}</span>)}</div>
-        <div className="flex items-center gap-2 mt-3">
-          {status !== 'approved' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(insight,'approved')}>approve insight</button>}
-          {status !== 'challenged' && <button className="btn-ghost text-[11px]" disabled={loading} onClick={()=>reviewEvidence(insight,'changes_requested')}>challenge insight</button>}
-        </div>
-      </div>;
-    })}
-  </div>
-</div>}
-{selected.analysis && <div className="space-y-3">
-  <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <span className="readout">SCENE RESEARCH</span>
-        <p className="text-xs text-muted mt-1">
-          Story Lab automatically searches the uploaded video for timestamped clips that match each script section and its central question. These are the clips that will sit under the voiceover.
-        </p>
-      </div>
-      {selected.scenes?.some(s=>s.extraction_status==='candidate') && (
-        <button className="btn-primary shrink-0" disabled={loading} onClick={extractScenes}>
-          extract {selected.scenes.filter(s=>s.extraction_status==='candidate').length} clip(s)
+        <button type="button" className="btn-ghost text-xs" onClick={() => setHelpOpen(true)}>
+          <HelpCircle size={14}/> how this workflow works
         </button>
-      )}
-    </div>
+      </div>
 
-    <div className="rounded border border-rule p-3">
-      <div className="text-[10px] uppercase tracking-wide text-brass">EDITORIAL QUESTION</div>
-      <div className="text-sm text-ink mt-1">{selected.brief?.question || selected.analysis?.story?.central_question || 'No central question set'}</div>
-      <p className="text-[10px] text-muted mt-1">The question is used together with each script section to find relevant source moments.</p>
-    </div>
-
-    {selected.script?.length ? (
-      <div className="space-y-2">
-        {selected.script.map((section, index) => {
-          const sectionScenes = sceneById(section.scene_ids || []);
+      <div className="flex flex-wrap gap-2">
+        {steps.map(([id, number, label, sub], index) => {
+          const active = workflowStep === id;
+          const done = index < stepIndex;
           return (
-            <div key={section.id} className="rounded border border-rule bg-paper p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-brass">{String(index + 1).padStart(2,'0')} · {section.heading}</div>
-                  <p className="text-xs text-ink mt-1">{section.narration}</p>
-                </div>
-                <span className="text-[10px] text-muted shrink-0">{sectionScenes.length} clip{sectionScenes.length === 1 ? '' : 's'}</span>
-              </div>
-              {sectionScenes.length ? (
-                <div className="mt-3 space-y-2">
-                  {sectionScenes.map(scene => (
-                    <div key={scene.id} className="rounded border border-rule p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="flex items-center gap-2 text-xs text-ink">
-                          <input type="checkbox" checked={scene.selected !== false} onChange={e=>selectScene(scene.id,e.target.checked)} />
-                          {scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s
-                        </label>
-                        <span className="text-[10px] uppercase text-muted">{scene.extraction_status}</span>
-                      </div>
-                      <p className="text-[11px] text-ink2 mt-1">{scene.purpose}</p>
-                      {scene.extraction_error && <p className="text-[10px] text-warn mt-1">Extraction error: {scene.extraction_error}</p>}
-                      {scene.output_file ? (
-                        <video className="w-full aspect-video rounded border border-rule bg-black object-contain mt-2" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} />
-                      ) : (
-                        <div className="mt-2 aspect-video rounded border border-dashed border-rule bg-paper3 flex items-center justify-center text-xs text-muted">
-                          Clip will be extracted automatically.
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 rounded border border-dashed border-rule p-2 text-[11px] text-muted">
-                  No timestamped clip was found for this section. The narration will not be treated as visually supported until a source moment is found.
-                </div>
-              )}
-            </div>
+            <button
+              key={id}
+              type="button"
+              onClick={() => goTo(id)}
+              className={`flex items-center gap-2 rounded-full border px-3 py-2 text-left transition-colors ${active ? 'border-brass bg-paper3 text-ink' : 'border-rule text-muted'}`}
+            >
+              <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] ${done ? 'bg-brass text-white' : active ? 'bg-ink text-paper' : 'bg-paper3'}`}>
+                {done ? <Check size={12}/> : number}
+              </span>
+              <span>
+                <span className="block text-xs">{label}</span>
+                <span className="hidden md:block text-[9px] text-muted">{sub}</span>
+              </span>
+            </button>
           );
         })}
       </div>
-    ) : (
-      <p className="text-xs text-muted">Run Analyze Story after setting the question. Story Lab will then build the narration and find the matching source clips automatically.</p>
-    )}
 
-    <details className="rounded border border-rule p-3">
-      <summary className="cursor-pointer text-xs text-ink">Manual scene search</summary>
-      <div className="mt-3 space-y-2">
-        <input className="input-field w-full" placeholder="Optional: search the source for a specific moment" value={sceneQuery} onChange={e=>setSceneQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&searchScenes(e.target.value)} />
-        <div className="flex gap-2">
-          <select className="input-field flex-1" value={sceneEmbeddingProvider} onChange={e=>setSceneEmbeddingProvider(e.target.value)}><option value="local">Local · no model</option><option value="auto">Auto · cached model</option><option value="sentence-transformers">Pretrained · download</option></select>
-          <select className="input-field flex-1" value={sceneSearchMode} onChange={e=>setSceneSearchMode(e.target.value)}><option value="hybrid">Hybrid local</option><option value="embedding">Vector only</option><option value="lexical">Exact words</option></select>
-          <button className="btn-ghost" disabled={loading} onClick={()=>searchScenes(sceneQuery)}>search</button>
-        </div>
-      </div>
-    </details>
-  </div>
-</div>}
-{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
-  <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
-    <div className="flex items-center justify-between gap-3">
-      <div><span className="readout">EVIDENCE FOR THIS ANGLE</span><p className="text-xs text-muted mt-1">Only evidence linked to the generated question, theory, story sections and counterpoints is shown here. The full transcript remains available below.</p></div>
-      <span className="text-[11px] text-muted">{evidenceById(curatedEvidenceIds()).length} relevant excerpt(s)</span>
-    </div>
-    <div className="grid sm:grid-cols-2 gap-2">
-      {curatedInsights().slice(0, 8).map(insight => <div key={insight.id} className="rounded border border-rule p-3">
-        <div className="flex items-center justify-between gap-2"><span className="text-[10px] uppercase tracking-wide text-brass">{insight.type}</span><span className="text-[10px] text-muted">{Math.round(insight.confidence * 100)}%</span></div>
-        <div className="text-xs text-ink mt-1">{insight.title}</div>
-        <p className="text-[11px] text-ink2 mt-1">{insight.text}</p>
-        <p className="text-[10px] text-muted mt-2">{insight.evidence_ids?.length || 0} linked source excerpt(s)</p>
-      </div>)}
-    </div>
-    <div className="space-y-2">
-      {evidenceById(curatedEvidenceIds()).slice(0, 24).map(e => <div key={e.id} className="rounded border border-rule p-3">
-        <div className="text-xs text-ink">{e.start != null ? e.start.toFixed(3)+'s — '+e.end.toFixed(3)+'s' : e.page ? 'page '+e.page : 'unlocated text'} · {e.label}</div>
-        <p className="text-[11px] text-ink2 mt-1">{e.claim}</p>
-        <p className="text-[10px] text-muted mt-1">{e.traceability} · confidence {Math.round(e.confidence * 100)}%</p>
-      </div>)}
-    </div>
-  </div>
-  <details className="rounded-input border border-rule p-4">
-    <summary className="cursor-pointer text-xs text-ink">Show all source excerpts ({selected.analysis.evidence.length})</summary>
-    <div className="mt-3 space-y-2">
-      {selected.analysis.evidence.map(e => <div key={e.id} className="rounded border border-rule p-3">
-        <div className="text-xs text-ink">{e.start != null ? e.start.toFixed(3)+'s — '+e.end.toFixed(3)+'s' : e.page ? 'page '+e.page : 'unlocated text'} · {e.label}</div>
-        <p className="text-[11px] text-muted mt-1">{e.claim}</p>
-      </div>)}
-    </div>
-  </details>
-</div>}{selected.script?.length>0 && (
-  <div className="space-y-2">
-    <div className="flex justify-between items-center">
-      <span className="readout">SCRIPT & VISUAL RESEARCH</span>
-      {selected.status==='approved' && <button className="btn-primary" disabled={loading} onClick={render}><Clapperboard size={14}/> create final video</button>}
-    </div>
-    {selected.script.map(section => {
-      const sectionScenes = sceneById(section.scene_ids || []);
-      return (
-        <div key={section.id} className="rounded-input border border-rule p-3">
-          <div className="flex flex-col gap-3">
-            <div className="flex justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm text-ink">{section.heading} · {section.duration_seconds}s</div>
-                <p className="text-xs text-muted mt-1">{section.narration}</p>
-                <p className="text-xs text-muted mt-2">Visual: {section.visual_suggestions?.map(v=>v.material_type.replace('_',' ')).join(', ')}</p>
-              </div>
-              <button className="btn-ghost shrink-0" disabled={loading || section.approved} onClick={()=>review(section)}>
-                {section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}
+      <div className="grid lg:grid-cols-[260px_1fr] gap-4">
+        <section className="card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="readout">PROJECTS</span>
+            <button className="btn-ghost" onClick={() => {setSelected(null); setWorkflowStep('sources');}} title="new project">
+              <Plus size={14}/>
+            </button>
+          </div>
+
+          {projects.length === 0 ? (
+            <p className="text-xs text-muted py-5">No Story Lab projects yet.</p>
+          ) : projects.map(project => (
+            <div key={project.id} className={`rounded-input border transition-colors ${selected?.id === project.id ? 'border-brass bg-paper3' : 'border-rule hover:bg-paper3/60'}`}>
+              <button
+                onClick={() => {
+                  setSelected(project);
+                  setWorkflowStep(project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources');
+                }}
+                className="w-full text-left p-3"
+              >
+                <div className="text-sm text-ink truncate">{project.title}</div>
+                <div className="text-[11px] text-muted mt-1">{project.kind} · {project.status}</div>
               </button>
             </div>
+          ))}
+        </section>
 
-            {sectionScenes.length > 0 && (
-              <div className="rounded border border-rule p-2">
-                <div className="text-[10px] uppercase tracking-wide text-brass">SOURCE SCENES</div>
-                <div className="mt-2 space-y-2">
-                  {sectionScenes.map(scene => (
-                    <div key={scene.id} className="flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs text-ink">{scene.title}</div>
-                        <div className="text-[10px] text-muted">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · {scene.extraction_status}</div>
-                      </div>
-                      {scene.extraction_status === 'candidate' && (
-                        <button className="btn-ghost text-[10px]" disabled={loading} onClick={()=>extractScenes([scene.id])}>extract scene</button>
-                      )}
-                    </div>
-                  ))}
+        <section className="card p-5 sm:p-6 min-w-0">
+          {!selected ? (
+            <div className="max-w-xl space-y-5">
+              <div>
+                <div className="flex items-center gap-2 text-brass">
+                  <Sparkles size={16}/><span className="readout">NEW STORY</span>
+                </div>
+                <h2 className="font-display lowercase text-2xl text-ink mt-2">Start with the sources</h2>
+                <p className="text-xs text-muted mt-2">
+                  Do not choose the theory yet. Story Lab first builds the complete source story so
+                  the later question is answered from what is actually present in the material.
+                </p>
+              </div>
+
+              <div className="grid sm:grid-cols-[1fr_150px] gap-3">
+                <input
+                  className="input-field"
+                  placeholder="Movie, series, anime or story title"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && create()}
+                />
+                <select className="input-field" value={kind} onChange={e => setKind(e.target.value)}>
+                  {kinds.map(k => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+
+              <button className="btn-primary" disabled={!title.trim() || creating} onClick={create}>
+                <Plus size={14}/>{creating ? 'creating…' : 'create project'}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div>
+                  <p className="readout">{selected.kind.toUpperCase()} · {selected.status.toUpperCase()}</p>
+                  <h2 className="font-display lowercase text-2xl text-ink mt-1">{selected.title}</h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {workflowStep !== 'sources' && (
+                    <button className="btn-ghost" onClick={() => goTo('sources')}><ChevronLeft size={14}/> sources</button>
+                  )}
                 </div>
               </div>
-            )}
 
-            {section.visual_research?.length > 0 && (
-              <div className="space-y-2">
-                {section.visual_research.map(v => {
-                  const visualScenes = sectionScenes.filter(scene =>
-                    (v.evidence_ids || []).some(id => (scene.evidence_ids || []).includes(id))
-                  );
-                  const fallbackScenes = visualScenes.length ? visualScenes : sectionScenes;
-                  const readyScenes = fallbackScenes.filter(scene => scene.output_file && scene.extraction_status === 'extracted');
-                  const isSourceBacked = v.material_type === 'source_backed';
-                  const canApprove = isSourceBacked ? readyScenes.length > 0 : v.material_type !== 'generated';
-
-                  return (
-                    <div key={v.id} className="rounded border border-rule p-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <div>
-                          <div className="text-xs text-ink">{v.material_type.replace('_',' ')}</div>
-                          <p className="text-[11px] text-ink2 mt-1">{v.description}</p>
-                        </div>
-                        <button className="btn-ghost text-[11px] shrink-0" disabled={loading || v.status === 'approved' || !canApprove} onClick={() => reviewVisual(v)}>
-                          {v.status === 'approved' && canApprove ? 'visual approved' : canApprove ? 'approve visual' : 'clip not ready'}
-                        </button>
+              {workflowStep === 'sources' && (
+                <div className="space-y-6">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-full bg-brass/10 p-2 text-brass"><BookOpen size={17}/></div>
+                      <div>
+                        <div className="readout text-brass">STEP 1 · COMPLETE SOURCE STORY</div>
+                        <h3 className="text-lg text-ink mt-1">Upload everything before choosing the angle</h3>
+                        <p className="text-xs text-muted mt-1">
+                          Video/audio is transcribed when enabled. Timestamped source material becomes
+                          evidence that can later resolve to real video clips.
+                        </p>
                       </div>
+                    </div>
+                  </div>
 
-                      <p className="text-[10px] text-muted mt-1">
-                        {v.evidence_ids?.length || 0} evidence link(s) · {readyScenes.length ? (readyScenes.length + ' clip' + (readyScenes.length === 1 ? '' : 's') + ' ready') : 'no extracted clip'}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="rounded-input border border-rule p-4 space-y-3">
+                      <div className="readout">VIDEO / AUDIO / DOCUMENT</div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={e => setUpload(e.target.files?.[0] || null)}
+                      />
+                      <button className="btn-ghost w-full justify-center" onClick={() => fileInputRef.current?.click()} disabled={loading}>
+                        <Upload size={14}/>{upload ? upload.name : 'choose source file'}
+                      </button>
+                      <label className="flex items-center gap-2 text-xs text-muted">
+                        <input type="checkbox" checked={transcribe} onChange={e => setTranscribe(e.target.checked)}/>
+                        transcribe video/audio for timestamped evidence
+                      </label>
+                      <button className="btn-primary w-full justify-center" disabled={!upload || loading} onClick={uploadSource}>
+                        upload source
+                      </button>
+                    </div>
+
+                    <div className="rounded-input border border-rule p-4 space-y-3">
+                      <div className="readout">TRANSCRIPT / TEXT SOURCE</div>
+                      <textarea
+                        className="input-field min-h-28 w-full resize-y"
+                        placeholder="Paste transcript, SRT/VTT or source notes…"
+                        value={transcript}
+                        onChange={e => setTranscript(e.target.value)}
+                      />
+                      <button className="btn-ghost" disabled={!transcript.trim() || loading} onClick={addTextSource}>
+                        <FileText size={14}/> add text source
+                      </button>
+                    </div>
+                  </div>
+
+                  {sourceMessage && (
+                    <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-ink2">
+                      <CheckCircle2 size={14} className="inline mr-2 text-emerald-600"/>{sourceMessage}
+                    </div>
+                  )}
+
+                  <div className="rounded-input border border-rule p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="readout">ATTACHED SOURCES</span>
+                      <span className="text-[11px] text-muted">{selected.sources?.length || 0} source(s)</span>
+                    </div>
+                    {selected.sources?.length ? (
+                      <div className="space-y-2">
+                        {selected.sources.map(source => (
+                          <div key={source.id} className="flex items-center gap-3 rounded border border-rule p-3">
+                            <FileText size={14} className="text-brass shrink-0"/>
+                            <div className="min-w-0">
+                              <div className="text-xs text-ink truncate">{source.name}</div>
+                              <div className="text-[10px] text-muted">{source.kind} · {source.ingestion_source || 'source'}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted">No sources attached yet.</p>
+                    )}
+                  </div>
+
+                  <button
+                    className="btn-primary w-full sm:w-auto"
+                    disabled={!selected.sources?.length || loading}
+                    onClick={analyzeSources}
+                  >
+                    <Sparkles size={14}/>{loading && busyLabel === 'Analyzing sources…' ? 'analyzing complete source story…' : 'analyze complete source story'}
+                  </button>
+                </div>
+              )}
+
+              {workflowStep === 'angle' && selected.analysis && (
+                <div className="space-y-6">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div className="readout text-brass">STEP 2 · CHOOSE THE STORY QUESTION</div>
+                    <h3 className="font-display lowercase text-2xl text-ink mt-1">What do you want this documentary to answer?</h3>
+                    <p className="text-xs text-muted mt-2 max-w-3xl">
+                      The complete source story has already been analyzed. Now choose the WHY, question,
+                      theory or angle. Build Story will use the source material again to find the evidence
+                      and clips that specifically answer it.
+                    </p>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {angles.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setAngle(value)}
+                        className={`rounded-input border p-4 text-left ${angle === value ? 'border-brass bg-paper3' : 'border-rule hover:bg-paper3/60'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {angle === value ? <CheckCircle2 size={15} className="text-brass"/> : <Circle size={15} className="text-muted"/>}
+                          <span className="text-sm text-ink">{label}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="rounded-input border border-rule p-4">
+                    <label className="readout flex items-center gap-2 mb-2"><MessageSquareQuestion size={14}/> CENTRAL QUESTION / THEORY / WHY</label>
+                    <textarea
+                      className="input-field w-full min-h-24 resize-y"
+                      placeholder="Example: Is Satou actually an isekai? Why did this happen? What evidence supports this theory?"
+                      value={question}
+                      onChange={e => setQuestion(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="rounded-input border border-rule p-4">
+                    <div className="readout">COMPLETE SOURCE STORY</div>
+                    <p className="text-xs text-ink2 mt-2 leading-relaxed">{selected.analysis.summary || 'No summary was returned.'}</p>
+                    <div className="grid sm:grid-cols-3 gap-2 mt-4">
+                      <div className="rounded border border-rule p-3"><div className="readout">EVIDENCE</div><div className="text-xl text-ink mt-1">{allEvidence.length}</div></div>
+                      <div className="rounded border border-rule p-3"><div className="readout">INSIGHTS</div><div className="text-xl text-ink mt-1">{insights.length}</div></div>
+                      <div className="rounded border border-rule p-3"><div className="readout">THEORIES</div><div className="text-xl text-ink mt-1">{selected.analysis.theories?.length || 0}</div></div>
+                    </div>
+                    {selected.analysis.themes?.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {selected.analysis.themes.map(theme => <span key={theme} className="rounded-full border border-rule px-2 py-1 text-[10px] text-muted">{theme}</span>)}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button className="btn-primary" disabled={!question.trim() && angle === 'story' || loading} onClick={buildStory}>
+                      <Sparkles size={14}/>{loading && busyLabel === 'Building story…' ? 'building story…' : 'build story'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {workflowStep === 'build' && selected.script?.length > 0 && (
+                <div className="space-y-6">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                      <div>
+                        <div className="readout text-brass">STEP 3 · BUILD STORY</div>
+                        <h3 className="font-display lowercase text-2xl text-ink mt-1">
+                          {selected.brief?.question || selected.analysis?.story?.central_question || selected.title}
+                        </h3>
+                        <p className="text-xs text-muted mt-2">
+                          Every section below keeps the narration, evidence and actual source footage together.
+                          Select only the clips you want in the final documentary.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-[10px]">
+                        <span className="rounded-full border border-rule px-2 py-1">{selected.script.length} sections</span>
+                        <span className="rounded-full border border-rule px-2 py-1">{selectedClips.length} clips selected</span>
+                        <span className="rounded-full border border-rule px-2 py-1">{extractedClips.length} clips ready</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {selected.script.map((section, index) => {
+                    const evidence = evidenceById(section.evidence_ids || []);
+                    const scenes = scenesForSection(section);
+                    return (
+                      <div key={section.id} className="rounded-input border border-rule overflow-hidden">
+                        <div className="bg-paper3 p-4 border-b border-rule">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-paper text-[10px] shrink-0">
+                              {String(index + 1).padStart(2, '0')}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-ink">{section.heading}</div>
+                              <div className="text-[10px] text-muted mt-1">{section.duration_seconds || '—'}s narration · {evidence.length} evidence item(s) · {scenes.length} source clip(s)</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid xl:grid-cols-2 gap-0">
+                          <div className="p-4 border-b xl:border-b-0 xl:border-r border-rule space-y-4">
+                            <div>
+                              <div className="readout">NARRATION / STORY</div>
+                              <p className="text-sm text-ink2 mt-2 leading-relaxed">{section.narration}</p>
+                            </div>
+
+                            <div>
+                              <div className="readout">EVIDENCE</div>
+                              {evidence.length ? (
+                                <div className="space-y-2 mt-2">
+                                  {evidence.map(item => (
+                                    <div key={item.id} className="rounded border border-rule p-3">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="text-xs text-ink">{item.label || 'Source evidence'}</div>
+                                        {item.start != null && <span className="text-[10px] text-brass">{formatTime(item.start)} — {formatTime(item.end)}</span>}
+                                      </div>
+                                      {item.claim && <p className="text-xs text-ink2 mt-1">{item.claim}</p>}
+                                      {item.supporting_text && <p className="text-[10px] text-muted mt-1">{item.supporting_text}</p>}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted mt-2">No linked evidence was returned for this section.</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <div className="readout">SOURCE VIDEO CLIPS</div>
+                                <p className="text-[10px] text-muted mt-1">Playable footage found from the cited source timestamps.</p>
+                              </div>
+                              <span className="text-[10px] text-muted">{scenes.filter(s => s.selected !== false).length} selected</span>
+                            </div>
+
+                            {scenes.length ? (
+                              <div className="space-y-3">
+                                {scenes.map(scene => {
+                                  const checked = scene.selected !== false;
+                                  const ready = scene.extraction_status === 'extracted' && scene.output_file;
+                                  return (
+                                    <div key={scene.id} className={`rounded border overflow-hidden ${checked ? 'border-brass/60' : 'border-rule'}`}>
+                                      {ready ? (
+                                        <video
+                                          className="w-full aspect-video object-contain bg-black"
+                                          controls
+                                          playsInline
+                                          preload="metadata"
+                                          src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
+                                        />
+                                      ) : (
+                                        <div className="aspect-video bg-paper3 flex flex-col items-center justify-center text-center p-4">
+                                          <PlayCircle size={28} className="text-muted"/>
+                                          <p className="text-xs text-muted mt-2">Clip is not extracted yet.</p>
+                                          {scene.extraction_error && <p className="text-[10px] text-warn mt-1">{scene.extraction_error}</p>}
+                                          <button className="btn-ghost text-[10px] mt-2" onClick={() => extractScenes([scene.id])} disabled={loading}>
+                                            extract clip
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      <div className="bg-paper p-3">
+                                        <label className="flex items-start gap-2 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            className="mt-0.5"
+                                            checked={checked}
+                                            onChange={e => selectScene(scene.id, e.target.checked)}
+                                          />
+                                          <span className="min-w-0">
+                                            <span className="block text-xs text-ink">{scene.title}</span>
+                                            <span className="block text-[10px] text-muted mt-1">
+                                              {formatTime(scene.start)} — {formatTime(scene.end)} · {Math.max(0, (scene.end || 0) - (scene.start || 0)).toFixed(1)}s
+                                            </span>
+                                          </span>
+                                        </label>
+                                        {scene.purpose && <p className="text-[10px] text-muted mt-2">{scene.purpose}</p>}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="rounded border border-dashed border-rule p-5 text-center">
+                                <Film size={22} className="mx-auto text-muted"/>
+                                <p className="text-xs text-muted mt-2">No timestamp-backed source clip was found for this section.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div>
+                      <div className="readout text-brass">CLIP SELECTION</div>
+                      <p className="text-xs text-muted mt-1">
+                        {selectedClips.length} selected · {extractedClips.length} playable.
+                        Uncheck anything you do not want used.
                       </p>
+                    </div>
+                    <button className="btn-primary" disabled={!selectedClips.length || loading} onClick={() => setWorkflowStep('narration')}>
+                      continue to narration <ChevronRight size={14}/>
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                      {readyScenes.length > 0 ? (
-                        <div className="grid sm:grid-cols-2 gap-2 mt-3">
-                          {readyScenes.map(scene => (
-                            <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black">
-                              <video
-                                className="w-full aspect-video object-contain"
-                                controls
-                                playsInline
-                                preload="metadata"
-                                src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
-                              />
-                              <div className="bg-paper px-2 py-1.5">
-                                <div className="text-[11px] text-ink">{scene.title}</div>
-                                <div className="text-[10px] text-muted">{scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s</div>
+              {workflowStep === 'narration' && selected.script?.length > 0 && (
+                <div className="space-y-6">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div className="readout text-brass">STEP 4 · NARRATION</div>
+                    <h3 className="font-display lowercase text-2xl text-ink mt-1">Prepare the voiceover from the selected story</h3>
+                    <p className="text-xs text-muted mt-2">
+                      The narration follows the question-driven script that was built from the source evidence.
+                      Approve each section after checking the wording against the evidence and selected footage.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {selected.script.map((section, index) => {
+                      const approved = Boolean(section.approved);
+                      const scenes = scenesForSection(section).filter(scene => scene.selected !== false);
+                      return (
+                        <div key={section.id} className="rounded-input border border-rule p-4">
+                          <div className="flex flex-col lg:flex-row gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-muted">{String(index + 1).padStart(2, '0')}</span>
+                                <span className="text-sm text-ink">{section.heading}</span>
+                                {approved ? <CheckCircle2 size={14} className="text-emerald-600"/> : <Circle size={14} className="text-muted"/>}
+                              </div>
+                              <p className="text-sm text-ink2 leading-relaxed mt-2">{section.narration}</p>
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                {scenes.map(scene => (
+                                  <span key={scene.id} className="rounded-full border border-rule px-2 py-1 text-[10px] text-muted">
+                                    {formatTime(scene.start)} · {scene.title}
+                                  </span>
+                                ))}
                               </div>
                             </div>
-                          ))}
+                            <div className="shrink-0">
+                              <button
+                                className={approved ? 'btn-ghost' : 'btn-primary'}
+                                disabled={loading}
+                                onClick={() => approveSection(section, !approved)}
+                              >
+                                {approved ? 'unapprove' : 'approve narration'}
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      ) : (
-                        <div className="mt-2 rounded border border-dashed border-rule p-3 text-[11px] text-muted">
-                          The relevant source moment has been found, but its video clip is not extracted yet. {fallbackScenes.some(scene => scene.extraction_status === 'error') ? 'Clip extraction failed; the error is shown in Scene Research.' : 'Run Analyze Story again or extract the candidate clip.'}
-                        </div>
-                      )}
+                      );
+                    })}
+                  </div>
+
+                  <div className="rounded-input border border-rule p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                      <div className="flex-1">
+                        <div className="readout">LOCAL VOICEBOX</div>
+                        {voiceboxProfiles.length ? (
+                          <select className="input-field w-full mt-2" value={voiceProfileId} onChange={e => setVoiceProfileId(e.target.value)}>
+                            {voiceboxProfiles.map(profile => (
+                              <option key={profile.id} value={profile.id}>{profile.name} · {profile.language || 'en'}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="text-xs text-muted border border-dashed border-rule rounded p-3 mt-2">
+                            {voiceboxLoading ? 'Checking Voicebox…' : voiceboxAvailable ? 'No Voicebox profiles found.' : 'Voicebox is not connected.'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>refresh</button>
+                        <button
+                          className="btn-primary"
+                          disabled={!allScriptApproved || !voiceboxAvailable || !voiceProfileId || loading}
+                          onClick={generateVoiceover}
+                        >
+                          prepare narration & voiceover
+                        </button>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    })}
-  </div>
-)}
-{selected.script?.length > 0 && (
-  <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div>
-        <span className="readout">FINAL ASSEMBLY</span>
-        <p className="text-xs text-muted mt-1">This is the production hand-off: script sections, approved narration and selected source visuals are brought together here in the exact order used by the renderer.</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="rounded-full border border-rule px-2 py-1">{selected.script.filter(s => s.approved).length}/{selected.script.length} script approved</span>
-        <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes || []).filter(s => s.selected !== false).length} scenes selected</span>
-        <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes || []).filter(s => s.selected !== false && s.extraction_status === 'extracted').length} visuals extracted</span>
-      </div>
-    </div>
-
-    <div className="space-y-2">
-      {selected.script.map((section, index) => {
-        const sectionScenes = sceneById(section.scene_ids || []).filter(scene => scene.selected !== false);
-        return (
-          <div key={section.id} className="rounded-input border border-rule bg-paper p-3">
-            <div className="flex items-start gap-3">
-              <div className="text-[11px] text-muted w-6 pt-1">{String(index + 1).padStart(2, '0')}</div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div className="text-sm text-ink">{section.heading}</div>
-                  <span className="text-[10px] uppercase text-muted">
-                    {section.duration_seconds}s · {section.approved ? 'approved' : 'needs approval'}
-                  </span>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download>
+                        <FileText size={13}/> narration script
+                      </a>
+                      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download>
+                        <Clock3 size={13}/> timing SRT
+                      </a>
+                    </div>
+                  </div>
                 </div>
-                <p className="text-xs text-ink2 mt-2 leading-relaxed">{section.narration}</p>
+              )}
 
-                {sectionScenes.length > 0 && (
-                  <div className="grid sm:grid-cols-2 gap-2 mt-3">
-                    {sectionScenes.map(scene => (
-                      <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black">
-                        {scene.output_file ? (
+              {workflowStep === 'final' && (
+                <div className="space-y-6">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
+                    <div className="readout text-brass">STEP 5 · FINAL VIDEO</div>
+                    <h3 className="font-display lowercase text-2xl text-ink mt-1">Assemble the selected clips with narration</h3>
+                    <p className="text-xs text-muted mt-2">
+                      The final render uses the approved script, selected source scenes and generated narration.
+                    </p>
+                  </div>
+
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <div className="rounded border border-rule p-4"><div className="readout">SCRIPT</div><div className="text-xl text-ink mt-1">{selected.script?.length || 0}</div><div className="text-[10px] text-muted">sections</div></div>
+                    <div className="rounded border border-rule p-4"><div className="readout">SELECTED CLIPS</div><div className="text-xl text-ink mt-1">{selectedClips.length}</div><div className="text-[10px] text-muted">{extractedClips.length} playable</div></div>
+                    <div className="rounded border border-rule p-4"><div className="readout">VOICEOVER</div><div className="text-xl text-ink mt-1">{selected.voiceover?.status === 'generated' ? 'READY' : '—'}</div><div className="text-[10px] text-muted">{allScriptApproved ? 'script approved' : 'approval required'}</div></div>
+                  </div>
+
+                  <div className="rounded-input border border-rule p-4">
+                    <div className="readout">SELECTED VISUAL TIMELINE</div>
+                    <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                      {extractedClips.map((scene, index) => (
+                        <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black">
                           <video
-                            className="w-full aspect-video object-cover"
+                            className="w-full aspect-video object-contain"
                             controls
+                            playsInline
                             preload="metadata"
                             src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
                           />
-                        ) : (
-                          <div className="aspect-video flex items-center justify-center text-[10px] text-muted bg-paper3">
-                            visual not extracted
-                          </div>
-                        )}
-                        <div className="bg-paper px-2 py-1.5">
-                          <div className="text-[11px] text-ink truncate">{scene.title}</div>
-                          <div className="text-[10px] text-muted">
-                            {scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s
+                          <div className="bg-paper p-2">
+                            <div className="text-[11px] text-ink">{index + 1}. {scene.title}</div>
+                            <div className="text-[10px] text-muted">{formatTime(scene.start)} — {formatTime(scene.end)}</div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                )}
 
-                {sectionScenes.length === 0 && (
-                  <div className="mt-3 rounded border border-dashed border-rule p-3 text-[11px] text-muted">
-                    No selected source visual is linked to this section yet. Use Scene Research to search for a timestamp-backed moment, select it, and extract it.
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-muted">
+                        {selected.voiceover?.status === 'generated'
+                          ? 'Narration is ready. Create the final documentary when the selected footage is correct.'
+                          : 'Generate narration first before rendering the final documentary.'}
+                      </p>
+                    </div>
+                    <button
+                      className="btn-primary"
+                      disabled={!allScriptApproved || selected.voiceover?.status !== 'generated' || !extractedClips.length || loading}
+                      onClick={render}
+                    >
+                      <Clapperboard size={14}/>{loading && busyLabel === 'Rendering final video…' ? 'rendering…' : 'create final video'}
+                    </button>
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
 
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-      <p className="text-[11px] text-muted">
-        Final render uses the approved script, extracted section-linked source scenes and the generated Voicebox narration. Nothing is published automatically.
-      </p>
-      <button
-        className="btn-primary"
-        disabled={loading || selected.status !== 'approved' || selected.voiceover?.status !== 'generated'}
-        onClick={render}
-      >
-        <Clapperboard size={14}/> create final video
-      </button>
-    </div>
-  </div>
-)}
+                  {selected.renders?.length > 0 && (
+                    <div className="rounded-input border border-rule p-4">
+                      <div className="readout">FINAL OUTPUT</div>
+                      <p className="text-xs text-muted mt-1">
+                        Latest render: {selected.renders[selected.renders.length - 1].status}
+                      </p>
+                      {selected.renders[selected.renders.length - 1].status === 'rendered' && (
+                        <div className="mt-3 space-y-3">
+                          <video
+                            className="w-full max-h-[520px] rounded bg-black"
+                            controls
+                            preload="metadata"
+                            src={'/api/storylab/projects/' + selected.id + '/download/render'}
+                          />
+                          <a className="btn-primary inline-flex" href={'/api/storylab/projects/' + selected.id + '/download/render'} download>
+                            <FileText size={14}/> download final video
+                          </a>
+                        </div>
+                      )}
+                      {selected.renders[selected.renders.length - 1].error && (
+                        <p className="text-xs text-warn mt-2">{selected.renders[selected.renders.length - 1].error}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
-{selected.script?.length > 0 && (
-  <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div>
-        <span className="readout">NARRATION & VOICEOVER</span>
-        <p className="text-xs text-muted mt-1">
-          The narration is generated from the approved Story Lab script, so it follows the same question, theory/why angle, evidence and conclusion used by the video.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download>
-          <FileText size={13}/> narration script
-        </a>
-        <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download>
-          <FileText size={13}/> timing SRT
-        </a>
-      </div>
-    </div>
-
-    <div className="rounded border border-rule p-3">
-      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-        <div className="flex-1">
-          <label className="eyebrow block mb-1.5">LOCAL VOICEBOX VOICE</label>
-          {voiceboxProfiles.length > 0 ? (
-            <select className="input-field w-full" value={voiceProfileId} onChange={e => setVoiceProfileId(e.target.value)}>
-              {voiceboxProfiles.map(profile => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.name} · {profile.language || 'en'}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="text-xs text-muted border border-dashed border-rule rounded p-3">
-              {voiceboxLoading
-                ? 'Checking Voicebox…'
-                : voiceboxAvailable
-                  ? 'No Voicebox profiles found. Create a voice profile in Voicebox first.'
-                  : 'Voicebox is not connected.'}
+              {analysisMessage && workflowStep === 'angle' && (
+                <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs text-ink2">
+                  <CheckCircle2 size={14} className="inline mr-2 text-emerald-600"/>{analysisMessage}
+                </div>
+              )}
             </div>
           )}
-        </div>
-
-        <div className="flex gap-2">
-          <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>
-            refresh
-          </button>
-          <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>
-            generate voiceover
-          </button>
-        </div>
+        </section>
       </div>
 
-      {selected.voiceover?.status === 'generated' && (
-        <p className="text-[11px] text-emerald-700 mt-2">
-          Voiceover generated with Voicebox and mixed into the latest final video.
-        </p>
-      )}
-      {selected.voiceover?.status === 'error' && (
-        <p className="text-[11px] text-warn mt-2">
-          Voiceover failed: {selected.voiceover.error}
-        </p>
-      )}
-      <p className="text-[10px] text-muted mt-2">
-        No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.
-      </p>
-    </div>
-  </div>
-)}
-
-{selected.renders?.length > 0 ? (
-  <div className="rounded-input border border-rule p-4 space-y-4">
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div>
-        <span className="readout">FINAL VIDEO</span>
-        <p className="text-xs text-muted mt-1">
-          The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.
-        </p>
-      </div>
-      {selected.renders[selected.renders.length - 1].status === 'rendered' ? (
-        <a
-          className="btn-primary"
-          href={'/api/storylab/projects/' + selected.id + '/download/render'}
-          download
-        >
-          <FileText size={14}/> download final video
-        </a>
-      ) : null}
-    </div>
-
-    <div className="text-xs text-muted">
-      Latest render: {selected.renders[selected.renders.length - 1].status}. Selected clips are extracted automatically and assembled in script order.
-    </div>
-
-    {selected.youtube ? (
-      <div className="rounded border border-rule p-3 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <span className="readout">YOUTUBE UPLOAD PACKAGE</span>
-            <p className="text-[11px] text-muted mt-1">
-              Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.
+      {loading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4">
+          <div className="card max-w-md w-full p-6 text-center shadow-xl">
+            <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-brass border-t-transparent animate-spin"></div>
+            <div className="readout text-brass">{busyLabel || 'WORKING'}</div>
+            <p className="text-sm text-ink mt-2">
+              {busyLabel === 'Analyzing sources…'
+                ? 'Reading the supplied sources and building the complete source story.'
+                : busyLabel === 'Building story…'
+                  ? 'Applying the selected question/theory to the source evidence and finding the necessary timestamped clips.'
+                  : busyLabel === 'Rendering final video…'
+                    ? 'Assembling the selected source footage and narration.'
+                    : 'Story Lab is processing your request.'}
             </p>
           </div>
-          <button
-            className="btn-ghost text-[11px]"
-            type="button"
-            onClick={copyAllMetadata}
-          >
-            <Copy size={13}/>
-            {copiedMetadata === 'all' ? 'copied all' : 'copy all'}
-          </button>
         </div>
+      )}
 
-        <div>
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <label className="eyebrow">YOUTUBE TITLE</label>
-            <button
-              type="button"
-              className="btn-ghost text-[10px]"
-              onClick={() => copyMetadata('title', selected.youtube.title || '')}
-            >
-              {copiedMetadata === 'title' ? <Check size={13}/> : <Copy size={13}/>}
-              {copiedMetadata === 'title' ? 'copied' : 'copy'}
-            </button>
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setHelpOpen(false)}>
+          <div className="card max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="readout text-brass">HOW STORY LAB WORKS</div>
+                <h3 className="font-display lowercase text-2xl text-ink mt-1">Source → question → evidence → footage → narration → video</h3>
+              </div>
+              <button className="btn-ghost" onClick={() => setHelpOpen(false)}><X size={16}/></button>
+            </div>
+            <div className="mt-5 space-y-4 text-sm text-ink2">
+              <div><strong>1. Source analysis.</strong><p className="text-xs text-muted mt-1">Upload the complete source material and analyze it before choosing an editorial theory. This creates the underlying story, evidence, insights and timestamped source record.</p></div>
+              <div><strong>2. Choose the question.</strong><p className="text-xs text-muted mt-1">Select Why, Theory, Character, Ending, Documentary or another angle, then enter the actual question you want the video to answer.</p></div>
+              <div><strong>3. Build Story.</strong><p className="text-xs text-muted mt-1">Each generated section puts narration, evidence and source clips together. Clips are real extracted MP4 segments from the uploaded source whenever timestamped evidence exists.</p></div>
+              <div><strong>4. Narration.</strong><p className="text-xs text-muted mt-1">Review and approve the narration section by section, then generate the local Voicebox narration.</p></div>
+              <div><strong>5. Final Video.</strong><p className="text-xs text-muted mt-1">Only the clips you selected are passed into the final assembly. The final MP4 is previewable and downloadable here.</p></div>
+            </div>
           </div>
-          <input
-            className="input-field w-full"
-            maxLength={100}
-            value={selected.youtube.title || ''}
-            onChange={e => replaceProject({
-              ...selected,
-              youtube: {...selected.youtube, title: e.target.value}
-            })}
-            onBlur={() => saveYoutube({title: selected.youtube.title})}
-            placeholder="Video title"
-          />
         </div>
+      )}
 
-        <div>
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <label className="eyebrow">YOUTUBE DESCRIPTION</label>
-            <button
-              type="button"
-              className="btn-ghost text-[10px]"
-              onClick={() => copyMetadata('description', selected.youtube.description || '')}
-            >
-              {copiedMetadata === 'description' ? <Check size={13}/> : <Copy size={13}/>}
-              {copiedMetadata === 'description' ? 'copied' : 'copy'}
-            </button>
-          </div>
-          <textarea
-            className="input-field w-full min-h-40 resize-y"
-            maxLength={5000}
-            value={selected.youtube.description || ''}
-            onChange={e => replaceProject({
-              ...selected,
-              youtube: {...selected.youtube, description: e.target.value}
-            })}
-            onBlur={() => saveYoutube({description: selected.youtube.description})}
-            placeholder="Video description"
-          />
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <label className="eyebrow">YOUTUBE TAGS</label>
-            <button
-              type="button"
-              className="btn-ghost text-[10px]"
-              onClick={() => copyMetadata('tags', (selected.youtube.tags || []).join(', '))}
-            >
-              {copiedMetadata === 'tags' ? <Check size={13}/> : <Copy size={13}/>}
-              {copiedMetadata === 'tags' ? 'copied' : 'copy'}
-            </button>
-          </div>
-          <input
-            className="input-field w-full"
-            value={(selected.youtube.tags || []).join(', ')}
-            onChange={e => replaceProject({
-              ...selected,
-              youtube: {
-                ...selected.youtube,
-                tags: e.target.value.split(',').map(v => v.trim()).filter(Boolean)
-              }
-            })}
-            onBlur={() => saveYoutube({tags: selected.youtube.tags || []})}
-            placeholder="tag 1, tag 2, tag 3"
-          />
-          <p className="text-[10px] text-muted mt-1">
-            Copy uses comma-separated tags, ready to paste into YouTube's tags field.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <a
-            className="btn-ghost"
-            href={'/api/storylab/projects/' + selected.id + '/download/metadata'}
-            download
-          >
-            <FileText size={13}/> download metadata JSON
-          </a>
-        </div>
-      </div>
-    ) : null}
-  </div>
-) : null}
-      </div>}
-      </section>
+      {error && <div className="rounded-input border border-rule2 p-3 text-sm text-warn">{error}</div>}
     </div>
-    {loading && busyLabel === 'Analyzing story…' && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="card max-w-md w-full p-6 text-center shadow-xl"><div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-brass border-t-transparent animate-spin"></div><div className="readout text-brass">ANALYZING STORY</div><p className="text-sm text-ink mt-2">Story Lab is reading the supplied sources, extracting evidence, building insights and generating the story outline.</p><p className="text-xs text-muted mt-2">This can take a while for video/audio because transcription may run first.</p></div></div>}
-    {helpOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={()=>setHelpOpen(false)}><div className="card max-w-2xl w-full max-h-[85vh] overflow-y-auto p-6" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><div><div className="readout text-brass">HOW STORY LAB WORKS</div><h3 className="font-display lowercase text-2xl text-ink mt-1">From source to finished story</h3></div><button className="btn-ghost" onClick={()=>setHelpOpen(false)}><X size={16}/></button></div><div className="mt-5 space-y-4 text-sm text-ink2"><div><strong>1. Create a project.</strong><p className="text-xs text-muted mt-1">Enter the title, choose the type, and select the editorial angle. The angle changes what Story Lab looks for; it does not change the source evidence.</p></div><div><strong>2. Add your sources.</strong><p className="text-xs text-muted mt-1">Paste a transcript/source text or upload video, audio, PDF, SRT/VTT, TXT, Markdown or JSON. For video/audio, enable local transcription when you want Story Lab to extract spoken content.</p></div><div><strong>3. Analyze Story.</strong><p className="text-xs text-muted mt-1">Analysis is a deliberate step. Click <strong>Analyze Story</strong> after your sources are attached. The analysis screen shows that Story Lab is working while transcription, evidence extraction and story analysis run.</p></div><div><strong>4. Review Story Intelligence.</strong><p className="text-xs text-muted mt-1">Facts, events, characters, themes, theories, interpretations, questions and counterpoints are separated and linked back to evidence. Approve or challenge insights as needed.</p></div><div><strong>5. Use Story Builder.</strong><p className="text-xs text-muted mt-1">Treat the generated Story Builder as your editable narrative draft. Refine the central question, hook, context, conflict, consequences, significance, interpretation, timeline, key events, people, counterpoints and open questions. Keep changes consistent with the evidence shown underneath each field, then save the story.</p></div><div><strong>6. Build and review the script.</strong><p className="text-xs text-muted mt-1">The saved story feeds the script builder. Approve each script section after checking its narration, evidence and visual research.</p></div><div><strong>7. Select scenes and render.</strong><p className="text-xs text-muted mt-1">Search the source for relevant moments, select the scenes you want, extract them, and create the final text-and-visual video. Download the MP4 and the generated title, description and tags; Story Lab does not publish automatically.</p></div><div className="rounded border border-brass/30 bg-paper3 p-3"><strong>Language:</strong><p className="text-xs text-muted mt-1">Story Lab's analysis output is intended to be English. Source material may be in another language; the analysis should translate the meaning into English while preserving necessary proper names and original titles.</p></div></div></div></div>}
-    {error && <div className="rounded-input border border-rule2 p-3 text-sm text-warn">{error}</div>}
-  </div>;
+  );
 }
