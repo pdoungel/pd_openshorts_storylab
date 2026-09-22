@@ -165,6 +165,16 @@ class RenderArtifact(BaseModel):
     created_at: str
 
 
+class VoiceoverSegment(BaseModel):
+    """One narration generation placed on the final documentary timeline."""
+    section_id: str
+    generation_id: Optional[str] = None
+    start_seconds: float = Field(default=0, ge=0)
+    end_seconds: float = Field(default=0, ge=0)
+    audio_path: Optional[str] = None
+    text: str = ""
+
+
 class VoiceoverArtifact(BaseModel):
     """Locally generated narration produced by the configured Story Lab TTS provider."""
     status: Literal["pending", "generating", "generated", "error"] = "pending"
@@ -175,6 +185,7 @@ class VoiceoverArtifact(BaseModel):
     audio_path: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[str] = None
+    segments: list[VoiceoverSegment] = Field(default_factory=list)
 
 
 class YouTubePackage(BaseModel):
@@ -209,7 +220,7 @@ class Scene(BaseModel):
     search_method: Literal["hybrid-local-vector", "hybrid-sentence-transformers", "local-vector", "sentence-transformers", "lexical"] = "hybrid-local-vector"
     extraction_status: Literal["candidate", "extracted", "error"] = "candidate"
     extraction_error: Optional[str] = None
-    selected: bool = True
+    selected: bool = False
 
 
 class StoryAnalysis(BaseModel):
