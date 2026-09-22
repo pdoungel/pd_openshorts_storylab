@@ -363,6 +363,9 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
       });
       replaceProject(project);
       if (project.error && project.voiceover?.status === 'manual') setError(project.error);
+      if (project.voiceover?.status === 'manual' && project.script?.length && project.script.every(section => section.approved) && (project.scenes || []).some(scene => scene.selected === true)) {
+        setWorkflowStep('final');
+      }
     } catch (e) {
       setError(e.message || 'Could not upload narration audio.');
     } finally {
@@ -1314,6 +1317,18 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {['generated', 'manual'].includes(selected.voiceover?.status) && allScriptApproved && selectedClips.length > 0 && (
+                      <div className="mt-5 rounded-input border border-brass/40 bg-paper3 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <div className="readout text-brass">NARRATION READY</div>
+                          <p className="text-xs text-ink2 mt-1">Your narration audio is ready and your selected source clips are available.</p>
+                        </div>
+                        <button type="button" className="btn-primary" onClick={() => setWorkflowStep('final')}>
+                          <Clapperboard size={14}/> continue to final video
+                        </button>
                       </div>
                     )}
                   </div>
