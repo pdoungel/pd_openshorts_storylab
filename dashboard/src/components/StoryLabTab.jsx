@@ -845,10 +845,16 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                       <div className="readout text-brass">CLIP SELECTION</div>
                       <p className="text-xs text-muted mt-1">
                         {selectedClips.length} selected · {extractedClips.length} playable.
-                        Uncheck anything you do not want used.
+                        {selectedClips.length !== extractedClips.length
+                          ? ' Every selected clip must be playable before narration can be prepared.'
+                          : ' Uncheck anything you do not want used.'}
                       </p>
                     </div>
-                    <button className="btn-primary" disabled={!selectedClips.length || loading} onClick={() => setWorkflowStep('narration')}>
+                    <button
+                      className="btn-primary"
+                      disabled={!selectedClips.length || selectedClips.length !== extractedClips.length || loading}
+                      onClick={() => setWorkflowStep('narration')}
+                    >
                       continue to narration <ChevronRight size={14}/>
                     </button>
                   </div>
