@@ -1,0 +1,17 @@
+services:
+  # Local development: StoryLab Python changes are picked up automatically.
+  # No image rebuild is needed when editing/pulling source files.
+  backend:
+    command:
+      - uvicorn
+      - app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+      - --timeout-graceful-shutdown
+      - "15"
