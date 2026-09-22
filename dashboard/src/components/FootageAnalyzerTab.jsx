@@ -22,6 +22,8 @@ export default function FootageAnalyzerTab() {
   const [voiceover, setVoiceover] = useState(null);
   const [footage, setFootage] = useState([]);
   const [footageRoot, setFootageRoot] = useState('');
+  const [footageFolderName, setFootageFolderName] = useState('');
+  const [resolvingFolder, setResolvingFolder] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [job, setJob] = useState(null);
   const [timeline, setTimeline] = useState([]);
@@ -64,7 +66,7 @@ export default function FootageAnalyzerTab() {
 
   const startAnalysis = async () => {
     if (!voiceover || !footageRoot.trim()) {
-      setError('Select a voiceover and enter the footage folder path as seen by Docker.');
+      setError('Select a voiceover and choose a footage folder that can be located by the analyzer.');
       return;
     }
     setError('');
@@ -120,15 +122,47 @@ export default function FootageAnalyzerTab() {
             </label>
 
             <label className="block">
-              <span className="readout block mb-2">footage folder path · inside Docker</span>
-              <input
-                className="input-field"
-                placeholder="/Users/yourname/Movies/Footage or /Volumes/Drive/Footage"
-                value={footageRoot}
-                onChange={e => setFootageRoot(e.target.value)}
-              />
-              <p className="text-[11px] text-muted mt-1.5">Use the Mac path. Docker maps /Users and /Volumes read-only into the analyzer.</p>
+              <span className="readout block mb-2">footage folder</span>
+              <label className="btn-quiet inline-flex cursor-pointer items-center gap-2">
+                <FolderOpen size={14} />
+                {resolvingFolder ? ' locating folder…' : ' choose footage folder'}
+                <input type="file" multiple webkitdirectory="" directory="" accept="video/*" className="hidden"
+                  onChange={async e => {
+                    const files = Array.from(e.target.files || []);
+                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setError('');
+                    if (!files.length) return;
+                    const first = files[0];
+                    const folderName = (first.webkitRelativePath || '').split('/')[0] || '';
+                    setFootageFolderName(folderName);
+                    const nativePath = first.path;
+                    if (nativePath && (nativePath.startsWith('/Users/') || nativePath.startsWith('/Volumes/'))) {
+                      setFootageRoot(nativePath.slice(0, nativePath.lastIndexOf('/'))); return;
+                    }
+                    setResolvingFolder(true);
+                    try {
+                      const resolveRes = await fetch(`${ANALYZER_URL}/api/footage-analyzer/resolve-folder`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folder_name: folderName, samples: files.slice(0, 10).map(f => ({ relative_path: f.webkitRelativePath, size: f.size })) })
+                      });
+                      const resolveData = await resolveRes.json().catch(() => ({}));
+                      if (!resolveRes.ok) throw new Error(resolveData.detail || 'Could not locate the selected folder');
+                      setFootageRoot(resolveData.path);
+                    } catch (err) {
+                      setError(err.message || 'Could not locate the selected folder');
+                    } finally { setResolvingFolder(false); }
+                  }}
+                />
+              </label>
+              <p className="text-[11px] text-muted mt-2">Choose the folder in Finder. The folder itself is not uploaded; the analyzer reads it from the mounted Mac filesystem.</p>
             </label>
+
+            <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
+              <FolderOpen size={17} className="text-brass mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm text-ink2">{resolvingFolder ? 'Locating selected folder…' : footageFolderName || 'No footage folder selected'}</p>
+                <p className="text-xs text-muted mt-1">{footageRoot || (footageCount ? `${footageCount} video files found in the selected folder` : 'Select a footage folder from Finder.')}</p>
+              </div>
+            </div>
 
             <label className="block">
               <span className="readout block mb-2">optional browser folder preview</span>
@@ -149,7 +183,7 @@ export default function FootageAnalyzerTab() {
             </label>
 
             <div className="flex items-center gap-3">
-              <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || job?.status === 'processing'} onClick={startAnalysis}>
+              <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || resolvingFolder || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                 {job?.status === 'processing' ? ' analyzing…' : ' analyze footage'}
               </button>
@@ -169,7 +203,7 @@ export default function FootageAnalyzerTab() {
 
             <div className="border-t border-rule pt-4 grid grid-cols-3 gap-3 text-center">
               <div><Mic2 size={15} className="mx-auto text-brass mb-1" /><p className="readout">voiceover</p><p className="text-sm text-ink2 mt-1">{voiceover ? 'ready' : 'missing'}</p></div>
-              <div><Film size={15} className="mx-auto text-brass mb-1" /><p className="readout">footage</p><p className="text-sm text-ink2 mt-1">{footageRoot ? 'mounted' : 'missing'}</p></div>
+              <div><Film size={15} className="mx-auto text-brass mb-1" /><p className="readout">footage</p><p className="text-sm text-ink2 mt-1">{footageRoot ? 'mounted' : resolvingFolder ? 'locating…' : 'missing'}</p></div>
               <div><Search size={15} className="mx-auto text-brass mb-1" /><p className="readout">matching</p><p className="text-sm text-ink2 mt-1">semantic</p></div>
             </div>
           </section>
