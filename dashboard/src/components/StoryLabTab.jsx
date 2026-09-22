@@ -610,6 +610,91 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                         {selected.analysis.themes.map(theme => <span key={theme} className="rounded-full border border-rule px-2 py-1 text-[10px] text-muted">{theme}</span>)}
                       </div>
                     )}
+
+                    {selected.analysis.story && (
+                      <details className="mt-4 rounded border border-rule p-3" open>
+                        <summary className="cursor-pointer text-xs text-ink">View the complete source story</summary>
+                        <div className="grid md:grid-cols-2 gap-4 mt-4">
+                          {[
+                            ['Hook', selected.analysis.story.hook],
+                            ['Context', selected.analysis.story.context],
+                            ['Conflict', selected.analysis.story.conflict],
+                            ['Consequences', selected.analysis.story.consequences],
+                            ['Significance', selected.analysis.story.significance],
+                            ['Central question found in the source', selected.analysis.story.central_question],
+                            ['Interpretation', selected.analysis.story.interpretation],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded border border-rule p-3">
+                              <div className="readout">{label}</div>
+                              <p className="text-xs text-ink2 mt-2 leading-relaxed">{value || '—'}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {selected.analysis.story.timeline?.length > 0 && (
+                          <div className="mt-4">
+                            <div className="readout">TIMELINE</div>
+                            <div className="space-y-2 mt-2">
+                              {selected.analysis.story.timeline.map((item, index) => (
+                                <div key={index} className="rounded border border-rule p-2 text-xs text-ink2">
+                                  {index + 1}. {item}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {selected.analysis.story.key_events?.length > 0 && (
+                          <div className="mt-4">
+                            <div className="readout">KEY EVENTS</div>
+                            <div className="space-y-2 mt-2">
+                              {selected.analysis.story.key_events.map((item, index) => (
+                                <div key={index} className="rounded border border-rule p-2 text-xs text-ink2">
+                                  {index + 1}. {item}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {selected.analysis.story.people?.length > 0 && (
+                          <div className="mt-4">
+                            <div className="readout">PEOPLE / RELATIONSHIPS</div>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {selected.analysis.story.people.map((item, index) => (
+                                <span key={index} className="rounded-full border border-rule px-2 py-1 text-[10px] text-muted">{item}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {selected.analysis.story.counterpoints?.length > 0 && (
+                          <div className="mt-4">
+                            <div className="readout">COUNTERPOINTS</div>
+                            <div className="space-y-2 mt-2">
+                              {selected.analysis.story.counterpoints.map((item, index) => (
+                                <div key={index} className="rounded border border-rule p-2 text-xs text-ink2">
+                                  {index + 1}. {item}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {selected.analysis.story.open_questions?.length > 0 && (
+                          <div className="mt-4">
+                            <div className="readout">OPEN QUESTIONS</div>
+                            <div className="space-y-2 mt-2">
+                              {selected.analysis.story.open_questions.map((item, index) => (
+                                <div key={index} className="rounded border border-rule p-2 text-xs text-ink2">
+                                  {index + 1}. {item}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </details>
+                    )}
                   </div>
 
                   <div className="flex justify-end">
