@@ -6,6 +6,8 @@ import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
+from time import sleep, monotonic
+from typing import Callable
 
 from pydantic import BaseModel, Field
 
@@ -73,6 +75,33 @@ def voicebox_profiles() -> list[dict]:
     if isinstance(payload, list):
         return payload
     return []
+
+
+def _voicebox_profile(profile_id: str) -> dict:
+    payload = _request_json(f"/profiles/{profile_id}", timeout=10)
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _poll_generation(generation_id: str, timeout: int = 1800, progress: Callable[[str], None] | None = None) -> dict:
+    """Wait for Voicebox's queued generation to finish before requesting its audio."""
+    deadline = monotonic() + timeout
+    last_status = None
+    while monotonic() < deadline:
+        payload = _request_json(f"/generate/{generation_id}/status", timeout=15)
+        status = str(payload.get("status") or "").lower()
+        if status != last_status:
+            last_status = status
+            if progress:
+                progress(status or "generating")
+        if status in {"completed", "complete", "done", "success", "generated"}:
+            return payload
+        if status in {"failed", "error", "cancelled", "canceled"}:
+            detail = payload.get("error") or payload.get("message") or "Voicebox generation failed."
+            raise VoiceboxError(str(detail))
+        sleep(1.5)
+    raise VoiceboxError(f"Voicebox generation timed out after {timeout} seconds.")
 
 
 class _NarrationRewrite(BaseModel):
@@ -273,7 +302,7 @@ def _concat_audio(files: list[Path], output: Path) -> None:
     concat.unlink(missing_ok=True)
 
 
-def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str | Path) -> tuple[str, str, str, list[VoiceoverSegment]]:
+def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str | Path, progress: Callable[[int, int, str], None] | None = None) -> tuple[str, str, str, list[VoiceoverSegment]]:
     if not project.script or not all(section.approved for section in project.script):
         raise VoiceboxError("Prepare and approve every Story Lab narration section before generating Voicebox audio.")
 
@@ -284,24 +313,46 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
     generated = []
     segments: list[VoiceoverSegment] = []
     section_starts = _visual_section_starts(project)
+    total = len(project.script)
+    script_path = output_dir / "narration-script.txt"
+    srt_path = output_dir / "narration-timing.srt"
+    script_path.write_text(narration_text(project), encoding="utf-8")
+    srt_path.write_text(narration_srt(project), encoding="utf-8")
+    if progress:
+        progress(0, total, "Narration script saved. Starting Voicebox.")
+
+    profile = _voicebox_profile(profile_id)
+    language = str(profile.get("language") or "en").lower()
+    if language not in {"en", "zh"}:
+        language = "en"
 
     for index, section in enumerate(project.script):
         if not section.narration.strip():
             continue
+        if progress:
+            progress(index, total, f"Sending narration section {index + 1}/{total} to Voicebox.")
         response = _request_json(
             "/generate",
             method="POST",
             payload={
                 "profile_id": profile_id,
                 "text": section.narration.strip(),
-                "language": "en",
+                "language": language,
             },
-            timeout=1800,
+            timeout=60,
         )
         generation_id = response.get("id") or response.get("generation_id")
         if not generation_id:
-            raise VoiceboxError("Voicebox did not return a generation id.")
-        audio = _request_bytes(f"/audio/{generation_id}", timeout=1800)
+            raise VoiceboxError(f"Voicebox did not return a generation id for section {index + 1}.")
+        if str(response.get("status") or "").lower() not in {"completed", "complete", "done", "success", "generated"}:
+            response = _poll_generation(
+                str(generation_id),
+                timeout=1800,
+                progress=lambda status: progress(index, total, f"Voicebox section {index + 1}/{total}: {status}") if progress else None,
+            )
+        if progress:
+            progress(index, total, f"Downloading audio for section {index + 1}/{total}.")
+        audio = _request_bytes(f"/audio/{generation_id}", timeout=300)
         section_path = section_dir / f"{index:03d}_{section.id}.wav"
         section_path.write_bytes(audio)
         duration = float(response.get("duration") or 0)
@@ -323,8 +374,6 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
     if not generated:
         raise VoiceboxError("Voicebox generated no narration audio.")
 
-    script_path = output_dir / "narration-script.txt"
-    srt_path = output_dir / "narration-timing.srt"
     script_path.write_text(narration_text(project), encoding="utf-8")
     srt_path.write_text(narration_srt(project, segments), encoding="utf-8")
     (output_dir / "narration-segments.json").write_text(
@@ -332,6 +381,10 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
         encoding="utf-8",
     )
 
+    if progress:
+        progress(total, total, "Mixing narration onto the final documentary timeline.")
     audio_path = output_dir / "narration.wav"
     _mix_audio_timeline(segments, audio_path)
+    if progress:
+        progress(total, total, "Voicebox narration is ready.")
     return str(script_path), str(srt_path), str(audio_path), segments
