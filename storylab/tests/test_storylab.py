@@ -500,3 +500,32 @@ def test_source_records_ingestion_method(tmp_path):
     project = store.create(StoryProjectCreate(title="Record", kind="movie"))
     result = store.ingest_text(project.id, "A normal source passage.")
     assert result.sources[0].ingestion_source == "uploaded_text"
+
+
+def test_delete_project_removes_manifest_and_all_project_artifacts(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    project = store.create(StoryProjectCreate(title="Delete me", kind="anime"))
+    project_dirs = ("input", "inputs", "sources", "scenes", "clips", "renders", "voiceover", "audio", "narration")
+    for dirname in project_dirs:
+        path = store.root / dirname / project.id
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "artifact.bin").write_bytes(b"project data")
+    manifest = store.root / f"{project.id}.json"
+    assert manifest.is_file()
+
+    store.delete(project.id)
+
+    assert not manifest.exists()
+    for dirname in project_dirs:
+        assert not (store.root / dirname / project.id).exists()
+    assert project.id not in [item.id for item in store.list()]
+
+
+def test_delete_project_rejects_unsafe_project_id(tmp_path):
+    store = StoryLabStore(str(tmp_path))
+    try:
+        store.delete("../outside")
+    except ValueError as exc:
+        assert "Invalid Story Lab project id" in str(exc)
+    else:
+        raise AssertionError("unsafe project id should be rejected")
