@@ -45,7 +45,7 @@ class JobStore:
         j=self.get(jid)
         work=self.root/jid
         try:
-            voice=work/"voiceover"+Path(j["voiceover"]).suffix
+            voice=work / ("voiceover" + Path(j["voiceover"]).suffix)
             if not voice.exists():
                 # server stages the upload at incoming; copy it into the job for durability
                 src=Path(j["voiceover"]); voice.parent.mkdir(parents=True,exist_ok=True)
