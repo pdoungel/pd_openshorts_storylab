@@ -120,6 +120,16 @@ export default function FootageAnalyzerTab() {
               <span className="readout block mb-2">voiceover · wav / mp3 / m4a</span>
               <input type="file" accept="audio/*" className="input-field" onChange={e => setVoiceover(e.target.files?.[0] || null)} />
             </label>
+            {voiceover && (
+              <div className="rounded-input border border-rule bg-paper p-3 flex items-center gap-3">
+                <CheckCircle2 size={17} className="text-brass shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink2 truncate">{voiceover.name}</p>
+                  <p className="text-xs text-muted mt-1">{(voiceover.size / 1024 / 1024).toFixed(2)} MB · voiceover selected successfully</p>
+                </div>
+                <span className="badge-ok shrink-0"><CheckCircle2 size={12} /> ready</span>
+              </div>
+            )}
 
             <label className="block">
               <span className="readout block mb-2">footage folder</span>
@@ -182,6 +192,16 @@ export default function FootageAnalyzerTab() {
               <textarea className="input-field min-h-[92px] resize-y" placeholder="e.g. Prefer archival-looking footage and wide establishing shots when exact subjects are unavailable." value={instruction} onChange={e => setInstruction(e.target.value)} />
             </label>
 
+            {voiceover && footageRoot && !resolvingFolder && (
+              <div className="rounded-input border border-rule bg-paper p-3 flex items-center gap-3">
+                <CheckCircle2 size={18} className="text-brass shrink-0" />
+                <div>
+                  <p className="text-sm text-ink2">Ready to analyze</p>
+                  <p className="text-xs text-muted mt-1">Voiceover and footage folder have both been selected successfully.</p>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || resolvingFolder || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
@@ -202,8 +222,8 @@ export default function FootageAnalyzerTab() {
             {error && <div className="border border-rule rounded-input p-3 text-xs text-muted"><AlertTriangle size={14} className="inline mr-2 text-brass" />{error}</div>}
 
             <div className="border-t border-rule pt-4 grid grid-cols-3 gap-3 text-center">
-              <div><Mic2 size={15} className="mx-auto text-brass mb-1" /><p className="readout">voiceover</p><p className="text-sm text-ink2 mt-1">{voiceover ? 'ready' : 'missing'}</p></div>
-              <div><Film size={15} className="mx-auto text-brass mb-1" /><p className="readout">footage</p><p className="text-sm text-ink2 mt-1">{footageRoot ? 'mounted' : resolvingFolder ? 'locating…' : 'missing'}</p></div>
+              <div><Mic2 size={15} className="mx-auto text-brass mb-1" /><p className="readout">voiceover</p><p className="text-sm text-ink2 mt-1">{voiceover ? '✓ ready' : 'missing'}</p></div>
+              <div><Film size={15} className="mx-auto text-brass mb-1" /><p className="readout">footage</p><p className="text-sm text-ink2 mt-1">{footageRoot ? '✓ ready' : resolvingFolder ? 'locating…' : 'missing'}</p></div>
               <div><Search size={15} className="mx-auto text-brass mb-1" /><p className="readout">matching</p><p className="text-sm text-ink2 mt-1">semantic</p></div>
             </div>
           </section>
