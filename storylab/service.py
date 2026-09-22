@@ -122,9 +122,9 @@ class StoryLabStore:
             project.script = build_script(project.analysis, angle=project.brief.angle, kind=project.kind)
             project.scenes = []
             self.save(project)
-            # Scene research is driven by each generated script section, not one
-            # generic project-wide query. Each section therefore gets timestamped
-            # source moments relevant to the exact narration/question it will cover.
+            # Timestamped evidence is the ground truth for source footage. Create
+            # those exact playable scenes first; semantic search only supplements them.
+            self._create_evidence_scenes(project.id, context_seconds=2.5)
             for section in project.script:
                 query = " ".join(filter(None, [
                     project.brief.question,
