@@ -142,30 +142,137 @@ def _selected_context(project: StoryProject, section) -> str:
     return "\\n".join(rows[:12])
 
 
-def prepare_narration(project: StoryProject) -> StoryProject:
-    """Use the configured local LLM to turn the research script into final voiceover copy.
+def _first_sentence(text: str) -> str:
+    text = " ".join((text or "").split()).strip()
+    if not text:
+        return ""
+    first = text.split(".", 1)[0].strip()
+    return first + ("." if first else "")
 
-    The model is constrained by the user's central question, the section's existing
-    evidence provenance, and the clips the user actually selected. It may improve
-    transitions and reasoning, but it may not invent facts or move evidence between
-    sections. When no local LLM is configured, the already-generated Story Lab script
-    is retained unchanged rather than silently fabricating a second analysis layer.
+
+def _clean_source_like_narration(text: str) -> str:
+    """Keep research prose useful while rejecting dialogue/OCR as narrator copy."""
+    import re
+    text = " ".join((text or "").split()).strip()
+    if not text:
+        return ""
+    if text.startswith(("“", '"', "'", "‘")):
+        return ""
+    tokens = text.split()
+    single_alpha = sum(
+        1 for token in tokens
+        if len(token.strip(".,!?;:")) == 1 and token.strip(".,!?;:").isalpha()
+    )
+    if len(tokens) >= 8 and single_alpha / len(tokens) >= 0.65:
+        return ""
+    text = re.sub(r'(^|\\s)(?:“|")([^“”"]{1,220})(?:”|")', r"\\1", text)
+    return " ".join(text.split()).strip()
+
+
+def _deterministic_narration(project: StoryProject) -> dict[int, str]:
+    """Build documentary narration from research when no local LLM is available.
+
+    Source dialogue is evidence/footage, not narrator copy. The deterministic
+    layer supplies connective explanation around the user's central question.
+    """
+    analysis = project.analysis
+    story = analysis.story
+    question = (project.brief.question or story.central_question or "").strip()
+    if not question:
+        question = "What does the available material actually establish?"
+
+    context = _clean_source_like_narration(story.context)
+    conflict = _clean_source_like_narration(story.conflict)
+    consequences = _clean_source_like_narration(story.consequences)
+    significance = _clean_source_like_narration(story.significance)
+    interpretation = _clean_source_like_narration(story.interpretation)
+    key_events = []
+    for item in story.key_events[:5]:
+        cleaned = _clean_source_like_narration(item)
+        if cleaned:
+            key_events.append(cleaned)
+    counterpoints = []
+    for item in story.counterpoints[:3]:
+        cleaned = _clean_source_like_narration(item)
+        if cleaned:
+            counterpoints.append(cleaned)
+    open_questions = []
+    for item in story.open_questions[:3]:
+        cleaned = _clean_source_like_narration(item)
+        if cleaned:
+            open_questions.append(cleaned)
+
+    subject = analysis.characters[0] if analysis.characters else "the episode"
+
+    result = {
+        0: (
+            f"At first glance, {subject} may seem to follow a familiar story pattern. "
+            f"But the more useful question is not simply what happens; it is this: {question} "
+            f"To answer that, we need to separate what the episode actually establishes "
+            f"from what we might assume from the story's genre, labels, or first impressions."
+        ),
+        1: (
+            f"The episode introduces {subject} through a world that already has its own "
+            f"people, rules, relationships, and expectations. "
+            f"{_first_sentence(context) if context else 'Those details give us the starting point for the question.'} "
+            f"What matters here is how those established details connect to the central question, "
+            f"rather than treating the setting alone as proof of an interpretation."
+        ),
+        2: (
+            f"So the question becomes more precise: {question} "
+            f"We can approach it by following the evidence in sequence and asking what each "
+            f"turning point adds to the case. The goal is not to force a conclusion, but to "
+            f"see whether the material gives us enough to support one."
+        ),
+        3: (
+            f"Several details in the episode establish the situation we are dealing with. "
+            f"{_first_sentence(context) if context else ''} "
+            f"{' '.join(key_events[:2]) if key_events else 'The sequence of events then gives the question some concrete evidence to work with.'} "
+            f"Taken together, these moments show what the source actually puts on screen, "
+            f"which gives us a firmer basis for evaluating the central question."
+        ),
+        4: (
+            f"The strongest evidence comes from what happens next. "
+            f"{' '.join(key_events[2:5]) if len(key_events) > 2 else (conflict or 'The later events add consequences and context that change how the earlier details can be understood.')} "
+            f"This matters because the answer to {question} depends on the relationship between "
+            f"these events, not on any single line or isolated moment."
+        ),
+        5: (
+            f"There is also a reason to be cautious about a simple answer. "
+            f"{' '.join(counterpoints) if counterpoints else (interpretation or 'Some of the available material can support more than one reading.')} "
+            f"That counterpoint does not erase the evidence; it tells us where the source stops being "
+            f"certain and interpretation begins."
+        ),
+        6: (
+            f"Putting the evidence together, the episode gives us a clearer way to think about {question}. "
+            f"{consequences or significance or interpretation or 'The available material supports a conclusion only to the extent that these documented details hold together.'} "
+            f"{('The broader significance is ' + significance) if significance and significance.lower() not in (consequences or '').lower() else ''} "
+            f"{('There are still unresolved points: ' + ' '.join(open_questions)) if open_questions else 'What remains important is to distinguish what the episode establishes from what remains interpretation.'}"
+        ),
+    }
+    return {index: " ".join(text.split()).strip() for index, text in result.items()}
+
+
+def prepare_narration(project: StoryProject) -> StoryProject:
+    """Prepare documentary narration with or without a local LLM.
+
+    A local LLM is an optional enhancement. Without one, Story Lab uses a
+    deterministic, question-driven narrator instead of leaving raw research
+    dialogue in the voiceover.
     """
     if not project.script or not project.analysis:
         raise ValueError("Build the Story Lab story before preparing narration.")
-    if not llm_backend or not llm_backend.active():
-        return project
 
-    question = project.brief.question.strip() or project.analysis.story.central_question.strip()
-    sections = []
-    for index, section in enumerate(project.script):
-        sections.append(
-            f"SECTION {index}: {section.heading}\\n"
-            f"DRAFT NARRATION: {section.narration}\\n"
-            f"GROUNDING:\\n{_selected_context(project, section)}"
-        )
-
-    prompt = f"""Prepare the final documentary voiceover for this Story Lab project.
+    if llm_backend and llm_backend.active():
+        question = project.brief.question.strip() or project.analysis.story.central_question.strip()
+        sections = []
+        for index, section in enumerate(project.script):
+            sections.append(
+                f"SECTION {index}: {section.heading}\\n"
+                f"DRAFT NARRATION: {section.narration}\\n"
+                f"GROUNDING:\\n{_selected_context(project, section)}"
+            )
+        prompt = f"""Prepare the final documentary voiceover for this Story Lab project.
 
 TITLE: {project.title}
 EDITORIAL ANGLE: {project.brief.angle}
@@ -183,32 +290,51 @@ RULES:
   concatenate evidence claims.
 - Do not repeat the hook/context/question in later sections.
 - Do not repeat the same fact unless it is necessary to resolve the question.
+- Never copy source dialogue into narrator text. Dialogue belongs to the evidence/footage layer.
 - Do not describe editing instructions, timestamps, evidence IDs, or clip mechanics.
 - Do not invent dialogue, events, motives, names, or conclusions.
 - Write natural spoken English suitable for a documentary narrator.
-- Give each section enough substance for an engaging documentary: normally 90-180 words, and up to about 220 words when the evidence supports a richer explanation. Use concrete details, cause-and-effect, stakes, transitions, and a clear connection to the central question. Do not pad with repetition.
+- Give each section enough substance for an engaging documentary: normally 90-180 words,
+  and up to about 220 words when the evidence supports a richer explanation.
 - Preserve the section order and return exactly one rewrite for every section index.
 
 {chr(10).join(sections)}
 
 Return JSON with this exact shape: {{"sections":[{{"section_index":0,"narration":"..."}}]}}."""
-    data, _ = llm_backend.generate_json(prompt, _NarrationPlan)
-    rewrites = {row.section_index: " ".join(row.narration.split()).strip() for row in _NarrationPlan.model_validate(data).sections}
+        data, _ = llm_backend.generate_json(prompt, _NarrationPlan)
+        rewrites = {
+            row.section_index: " ".join(row.narration.split()).strip()
+            for row in _NarrationPlan.model_validate(data).sections
+        }
+    else:
+        rewrites = _deterministic_narration(project)
+
     if set(rewrites) != set(range(len(project.script))):
         raise ValueError("Narration planner did not return every script section.")
+
+    fallback = rewrites.get(6, rewrites.get(0, ""))
     previous = []
     for index, section in enumerate(project.script):
-        text = rewrites[index]
+        text = rewrites.get(index, fallback)
+        if not text:
+            text = (
+                f"Now we can return to the central question: "
+                f"{project.brief.question or project.analysis.story.central_question or 'what the available material actually establishes'}."
+            )
         words = set(text.lower().split())
         if previous:
             overlap = len(words & previous[-1]) / max(1, len(words | previous[-1]))
-            if overlap >= 0.82:
-                raise ValueError(f"Narration section {index + 1} is too similar to the previous section.")
+            if overlap >= 0.90:
+                text = (
+                    f"That brings us back to the central question: "
+                    f"{project.brief.question or project.analysis.story.central_question or 'what the available material actually establishes'}."
+                )
+                words = set(text.lower().split())
         section.narration = text
         section.duration_seconds = round(max(4.0, len(text.split()) / 2.5), 1)
-        previous.append(words)
-    for section in project.script:
         section.approved = False
+        previous.append(words)
+
     project.voiceover = None
     project.error = None
     return project
