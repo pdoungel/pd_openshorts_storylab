@@ -97,7 +97,16 @@ def _poll_generation(generation_id: str, poll_url: str | None = None, timeout: i
         if status != last_status:
             last_status = status
             if progress:
-                progress(status or "generating")
+                model_note = ""
+                try:
+                    model_payload = _request_json("/models/status", timeout=8)
+                    if isinstance(model_payload, dict):
+                        model_status = model_payload.get("status") or model_payload.get("state")
+                        if model_status:
+                            model_note = f" · model={model_status}"
+                except VoiceboxError:
+                    pass
+                progress(f"{status or 'generating'} · generation={generation_id}{model_note}")
         if status in {"completed", "complete", "done", "success", "generated"}:
             return payload
         if status in {"failed", "error", "cancelled", "canceled"}:
