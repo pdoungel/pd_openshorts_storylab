@@ -327,9 +327,9 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   };
 
   const generateVoiceover = async () => {
-    if (!selected || !voiceProfileId) return;
+    if (!selected || !voiceProfileId || !allScriptApproved) return;
     setLoading(true);
-    setBusyLabel('Generating Voicebox narration…');
+    setBusyLabel('Starting Voicebox narration…');
     setError('');
     try {
       const project = await apiJson('/api/storylab/projects/' + selected.id + '/voiceover', {
@@ -338,9 +338,33 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         body: JSON.stringify({profile_id: voiceProfileId})
       });
       replaceProject(project);
-      setWorkflowStep('final');
+      setWorkflowStep('narration');
     } catch (e) {
-      setError(e.message || 'Voiceover generation failed.');
+      setError(e.message || 'Voiceover generation failed. Your narration script remains available for manual generation.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
+  };
+
+  const uploadNarrationAudio = async (file, sectionId = '', combined = false) => {
+    if (!selected || !file) return;
+    setLoading(true);
+    setBusyLabel(combined ? 'Uploading combined narration…' : 'Uploading narration audio…');
+    setError('');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('combined', String(combined));
+      if (sectionId) body.append('section_id', sectionId);
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/narration/audio/upload', {
+        method: 'POST',
+        body
+      });
+      replaceProject(project);
+      if (project.error && project.voiceover?.status === 'manual') setError(project.error);
+    } catch (e) {
+      setError(e.message || 'Could not upload narration audio.');
     } finally {
       setLoading(false);
       setBusyLabel('');
@@ -465,7 +489,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     if (step === 'angle' && !selected.analysis) return;
     if (step === 'build' && !selected.script?.length) return;
     if (step === 'narration' && (!selected.script?.length || !selectedClips.length)) return;
-    if (step === 'final' && !allScriptApproved) return;
+    if (step === 'final' && (!allScriptApproved || !['generated', 'manual'].includes(selected?.voiceover?.status))) return;
     setWorkflowStep(step);
   };
 
@@ -1202,8 +1226,28 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                       </div>
                     </div>
                     <p className="text-[10px] text-muted mt-3">
-                      Story Lab sends each approved narration section to Voicebox separately. The returned audio duration becomes that section's exact timeline duration; the sections are then concatenated in order and the SRT is rebuilt from those measured durations.
+                      Story Lab sends each approved narration section to Voicebox, waits for the queued generation to finish, downloads the audio, and places it at that section's final documentary timeline position.
                     </p>
+                    {selected.voiceover?.status === 'generating' && (
+                      <div className="mt-4 rounded border border-brass/40 bg-paper3 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="readout text-brass">VOICEBOX PROGRESS</div>
+                          <div className="text-[10px] text-muted">{selected.voiceover.current_index || 0}/{selected.voiceover.total_segments || selected.script.length}</div>
+                        </div>
+                        <div className="mt-2 h-2 rounded-full bg-paper overflow-hidden">
+                          <div className="h-full bg-brass transition-all" style={{width: ((selected.voiceover.total_segments || selected.script.length) ? Math.min(100, ((selected.voiceover.current_index || 0) / (selected.voiceover.total_segments || selected.script.length)) * 100) : 0) + '%'}} />
+                        </div>
+                        <p className="text-xs text-ink2 mt-2">{selected.voiceover.message || 'Voicebox is processing the narration…'}</p>
+                        <p className="text-[10px] text-muted mt-1">The first generation can take longer while Voicebox loads its model.</p>
+                      </div>
+                    )}
+                    {selected.voiceover?.status === 'error' && (
+                      <div className="mt-4 rounded border border-warn/40 bg-warn/5 p-4">
+                        <div className="readout text-warn">VOICEBOX GENERATION FAILED</div>
+                        <p className="text-xs text-ink2 mt-2">{selected.voiceover.error || selected.voiceover.message || 'Voicebox could not generate the narration.'}</p>
+                        <p className="text-xs text-muted mt-2">The narration script was preserved. Download it below, generate the audio manually, then upload it section-by-section or as one combined track.</p>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-2 mt-3">
                       <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download>
                         <FileText size={13}/> narration script
@@ -1217,6 +1261,46 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                         </a>
                       )}
                     </div>
+                    <div className="mt-5 border-t border-rule pt-4">
+                      <div className="readout text-brass">MANUAL NARRATION AUDIO</div>
+                      <p className="text-[10px] text-muted mt-1">
+                        Upload one complete narration track, or upload separate audio files for 01, 02, 03… Each individual file is placed at that section's documentary timeline position.
+                      </p>
+                      <div className="mt-3">
+                        <label className="btn-ghost text-[11px] cursor-pointer inline-flex">
+                          <Upload size={13}/> upload one combined narration
+                          <input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac" className="hidden"
+                            onChange={e => { const file = e.target.files?.[0]; if (file) uploadNarrationAudio(file, '', true); e.target.value = ''; }} />
+                        </label>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {selected.script.map((section, index) => {
+                          const segment = (selected.voiceover?.segments || []).find(item => item.section_id === section.id);
+                          return (
+                            <div key={section.id} className="flex flex-col sm:flex-row sm:items-center gap-2 rounded border border-rule p-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs text-ink">{String(index + 1).padStart(2, '0')} · {section.heading}</div>
+                                <div className="text-[10px] text-muted">{segment?.audio_path ? (formatTime(segment.start_seconds) + ' → ' + formatTime(segment.end_seconds) + ' · audio ready') : 'audio not uploaded'}</div>
+                              </div>
+                              <label className="btn-ghost text-[10px] cursor-pointer shrink-0 inline-flex">
+                                <Upload size={12}/> upload {String(index + 1).padStart(2, '0')}
+                                <input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.flac" className="hidden"
+                                  onChange={e => { const file = e.target.files?.[0]; if (file) uploadNarrationAudio(file, section.id, false); e.target.value = ''; }} />
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {selected.voiceover?.status === 'manual' && selected.voiceover.audio_path && (
+                      <div className="mt-4 rounded border border-rule p-3">
+                        <div className="readout">MANUAL NARRATION TIMELINE</div>
+                        <audio className="w-full mt-2" controls src={'/api/storylab/projects/' + selected.id + '/download/narration-audio'} />
+                        <p className="text-[10px] text-muted mt-2">{selected.voiceover.message}</p>
+                      </div>
+                    )}
+
                     {selected.voiceover?.status === 'generated' && selected.voiceover.audio_path && (
                       <div className="mt-4 rounded border border-rule p-3">
                         <div className="readout">GENERATED NARRATION TIMELINE</div>
@@ -1242,14 +1326,14 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                     <div className="readout text-brass">STEP 5 · FINAL VIDEO</div>
                     <h3 className="font-display lowercase text-2xl text-ink mt-1">Assemble the selected clips with narration</h3>
                     <p className="text-xs text-muted mt-2">
-                      The final render uses the approved script, selected source scenes and generated narration.
+                      The final render uses the approved script, selected source scenes and either Voicebox-generated or manually uploaded narration.
                     </p>
                   </div>
 
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div className="rounded border border-rule p-4"><div className="readout">SCRIPT</div><div className="text-xl text-ink mt-1">{selected.script?.length || 0}</div><div className="text-[10px] text-muted">sections</div></div>
                     <div className="rounded border border-rule p-4"><div className="readout">SELECTED CLIPS</div><div className="text-xl text-ink mt-1">{selectedClips.length}</div><div className="text-[10px] text-muted">{extractedClips.length} playable</div></div>
-                    <div className="rounded border border-rule p-4"><div className="readout">VOICEOVER</div><div className="text-xl text-ink mt-1">{selected.voiceover?.status === 'generated' ? 'READY' : '—'}</div><div className="text-[10px] text-muted">{allScriptApproved ? 'script approved' : 'approval required'}</div></div>
+                    <div className="rounded border border-rule p-4"><div className="readout">VOICEOVER</div><div className="text-xl text-ink mt-1">{['generated', 'manual'].includes(selected.voiceover?.status) ? (selected.voiceover?.status === 'manual' ? 'MANUAL' : 'READY') : '—'}</div><div className="text-[10px] text-muted">{allScriptApproved ? 'script approved' : 'approval required'}</div></div>
                   </div>
 
                   <div className="rounded-input border border-rule p-4">
@@ -1276,14 +1360,14 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
                       <p className="text-xs text-muted">
-                        {selected.voiceover?.status === 'generated'
+                        {['generated', 'manual'].includes(selected.voiceover?.status)
                           ? 'Narration is ready. Create the final documentary when the selected footage is correct.'
-                          : 'Generate narration first before rendering the final documentary.'}
+                          : 'Generate Voicebox narration or upload manual narration before rendering the final documentary.'}
                       </p>
                     </div>
                     <button
                       className="btn-primary"
-                      disabled={!allScriptApproved || selected.voiceover?.status !== 'generated' || !extractedClips.length || loading}
+                      disabled={!allScriptApproved || !['generated', 'manual'].includes(selected.voiceover?.status) || !extractedClips.length || loading}
                       onClick={render}
                     >
                       <Clapperboard size={14}/>{loading && busyLabel === 'Rendering final video…' ? 'rendering…' : 'create final video'}
