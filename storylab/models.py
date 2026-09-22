@@ -177,7 +177,7 @@ class VoiceoverSegment(BaseModel):
 
 class VoiceoverArtifact(BaseModel):
     """Locally generated narration produced by the configured Story Lab TTS provider."""
-    status: Literal["pending", "generating", "generated", "error"] = "pending"
+    status: Literal["pending", "generating", "generated", "manual", "error"] = "pending"
     provider: str = "voicebox"
     profile_id: Optional[str] = None
     script_path: Optional[str] = None
