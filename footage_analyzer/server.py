@@ -49,14 +49,25 @@ async def resolve_folder(payload: dict):
     def onerror(_error):
         return None
 
+    # The browser gives us the folder name and sample files, not the native path.
+    # Do a fast shallow search first. Most Mac footage folders are either directly
+    # under /Volumes/<drive>/ or somewhere a few levels below it. Avoid walking
+    # an entire external drive just to resolve a folder name.
+    max_depth = 5
     for root in search_roots:
         if not root.exists():
             continue
         roots_seen.append(str(root))
+        root_depth = len(root.parts)
         for base, dirs, _files in os.walk(root, topdown=True, onerror=onerror, followlinks=False):
+            base_path = Path(base)
+            depth = len(base_path.parts) - root_depth
+            if depth >= max_depth:
+                dirs[:] = []
+                continue
             dirs[:] = [d for d in dirs if d not in skipped and not d.startswith(".")]
             if folder_name in dirs:
-                candidate = Path(base) / folder_name
+                candidate = base_path / folder_name
                 if candidate.is_dir():
                     candidates.append(candidate)
                     if len(candidates) >= 100:
