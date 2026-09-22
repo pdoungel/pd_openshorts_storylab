@@ -110,6 +110,7 @@ class StoryLabStore:
             self.search_scenes(project.id)
             self.link_scenes_to_script(project.id)
             self._prepare_script_scenes(project.id)
+            self._sync_visual_research_assets(project.id)
             # A freeform transcript can produce an outline, but it enters formal
             # review only once there is source evidence to review.
             project.status = "review" if project.analysis.evidence else "analyzed"
@@ -194,6 +195,7 @@ class StoryLabStore:
         self.save(project)
         self.link_scenes_to_script(project_id)
         self._prepare_script_scenes(project_id)
+        self._sync_visual_research_assets(project_id)
         project = self.get(project_id)
         project.reviews = [item for item in project.reviews if item.target_type not in {"script", "render"}]
         project.renders = []
@@ -311,6 +313,45 @@ class StoryLabStore:
                     extraction_status="candidate",
                 ))
         project.scenes.sort(key=lambda s: s.relevance, reverse=True)
+        return self.save(project)
+
+    def _sync_visual_research_assets(self, project_id: str) -> StoryProject:
+        """Resolve script visual research items to actual source/scene assets when possible."""
+        project = self.get(project_id)
+        evidence_by_id = {item.id: item for item in (project.analysis.evidence if project.analysis else [])}
+        scenes = project.scenes
+
+        for section in project.script:
+            linked_scenes = [scene for scene in scenes if scene.id in section.scene_ids]
+            for visual in section.visual_research:
+                matched_evidence = [evidence_by_id[eid] for eid in visual.evidence_ids if eid in evidence_by_id]
+                # A source-backed visual is only considered production-ready when
+                # the cited evidence resolves to a real extracted scene.
+                if visual.material_type == "source_backed":
+                    scene = next(
+                        (
+                            item for item in linked_scenes
+                            if item.extraction_status == "extracted" and item.output_file
+                        ),
+                        None,
+                    )
+                    if scene:
+                        visual.source_id = scene.source_id
+                        visual.asset_path = scene.output_file
+                        visual.status = "planned" if visual.status not in {"approved", "rejected"} else visual.status
+                        visual.notes = "Resolved from the cited timestamp-backed source scene."
+                    else:
+                        visual.source_id = next((item.source_id for item in matched_evidence if item.source_id), None)
+                        visual.asset_path = None
+                        visual.status = "planned" if visual.status not in {"approved", "rejected"} else visual.status
+                        visual.notes = "Source evidence exists, but no extracted scene asset is available yet."
+                elif matched_evidence:
+                    # Contextual/archival research remains explicitly separate from
+                    # source footage. It may have provenance without pretending to
+                    # depict the cited event.
+                    visual.source_id = matched_evidence[0].source_id
+                    if visual.material_type == "contextual":
+                        visual.notes = "Contextual material required; do not present it as the cited event."
         return self.save(project)
 
     def link_scenes_to_script(self, project_id: str) -> StoryProject:
