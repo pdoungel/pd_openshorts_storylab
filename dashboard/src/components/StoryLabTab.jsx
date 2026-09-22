@@ -340,25 +340,36 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     }
   };
 
-  const selectScene = async (sceneId, checked) => {
-    if (!selected) return;
+  const selectScenes = async (sceneIds, checked) => {
+    if (!selected || !sceneIds?.length) return;
     setLoading(true);
     setError('');
     try {
+      const target = new Set(sceneIds);
       const ids = (selected.scenes || [])
-        .filter(scene => scene.selected !== false && scene.id !== sceneId)
+        .filter(scene => (scene.selected !== false) && !target.has(scene.id))
         .map(scene => scene.id);
-      if (checked) ids.push(sceneId);
+      if (checked) ids.push(...sceneIds);
+      const uniqueIds = [...new Set(ids)];
       replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/scenes/select', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({scene_ids: ids})
+        body: JSON.stringify({scene_ids: uniqueIds})
       }));
     } catch (e) {
       setError(e.message || 'Could not update clip selection.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const selectScene = (sceneId, checked) => selectScenes([sceneId], checked);
+
+  const selectEvidence = (evidence, checked) => {
+    const ids = (selected?.scenes || [])
+      .filter(scene => (scene.evidence_ids || []).includes(evidence.id))
+      .map(scene => scene.id);
+    return selectScenes(ids, checked);
   };
 
   const extractScenes = async (sceneIds) => {
@@ -862,8 +873,34 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                               <div className="readout">EVIDENCE</div>
                               {evidence.length ? (
                                 <div className="space-y-2 mt-2">
-                                  {evidence.map(item => (
-                                    <div key={item.id} className="rounded border border-rule p-3">
+                                  {evidence.map(item => {
+                                    const evidenceScenes = (selected?.scenes || []).filter(scene => (scene.evidence_ids || []).includes(item.id));
+                                    const evidenceSelected = evidenceScenes.length > 0 && evidenceScenes.every(scene => scene.selected !== false);
+                                    const evidenceReady = evidenceScenes.filter(scene => scene.extraction_status === 'extracted' && scene.output_file).length;
+                                    return (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      disabled={!evidenceScenes.length || loading}
+                                      onClick={() => selectEvidence(item, !evidenceSelected)}
+                                      className={`w-full rounded border p-3 text-left transition-colors ${evidenceSelected ? 'border-brass bg-paper3' : 'border-rule hover:border-brass/60'} ${!evidenceScenes.length ? 'cursor-default' : 'cursor-pointer'}`}
+                                      title={evidenceScenes.length ? (evidenceSelected ? 'Unselect footage for this evidence' : 'Select footage for this evidence') : 'No source clip is linked to this evidence yet'}
+                                    >
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start gap-2 min-w-0">
+                                          <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${evidenceSelected ? 'border-brass bg-brass text-white' : 'border-rule'}`}>
+                                            {evidenceSelected && <Check size={10}/>}
+                                          </span>
+                                          <span className="text-xs text-ink">{item.label || 'Source evidence'}</span>
+                                        </div>
+                                        {item.start != null && <span className="text-[10px] text-brass shrink-0">{formatTime(item.start)} — {formatTime(item.end)}</span>}
+                                      </div>
+                                      {item.claim && <p className="text-xs text-ink2 mt-1 ml-6">{item.claim}</p>}
+                                      {item.supporting_text && <p className="text-[10px] text-muted mt-1 ml-6">{item.supporting_text}</p>}
+                                      {evidenceScenes.length > 0 && <p className="text-[9px] text-muted mt-2 ml-6">{evidenceScenes.length} source clip{evidenceScenes.length === 1 ? '' : 's'} · {evidenceReady} playable</p>}
+                                    </button>
+                                    );
+                                  })}
                                       <div className="flex items-start justify-between gap-2">
                                         <div className="text-xs text-ink">{item.label || 'Source evidence'}</div>
                                         {item.start != null && <span className="text-[10px] text-brass">{formatTime(item.start)} — {formatTime(item.end)}</span>}
@@ -894,7 +931,10 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                                   const checked = scene.selected !== false;
                                   const ready = scene.extraction_status === 'extracted' && scene.output_file;
                                   return (
-                                    <div key={scene.id} className={`rounded border overflow-hidden ${checked ? 'border-brass/60' : 'border-rule'}`}>
+                                    <div
+                                      key={scene.id}
+                                      className={`rounded border overflow-hidden transition-colors ${checked ? 'border-brass/60 bg-paper3' : 'border-rule'}`}
+                                    >
                                       {ready ? (
                                         <video
                                           className="w-full aspect-video object-contain bg-black"
@@ -915,20 +955,23 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                                       )}
 
                                       <div className="bg-paper p-3">
-                                        <label className="flex items-start gap-2 cursor-pointer">
-                                          <input
-                                            type="checkbox"
-                                            className="mt-0.5"
-                                            checked={checked}
-                                            onChange={e => selectScene(scene.id, e.target.checked)}
-                                          />
+                                        <button
+                                          type="button"
+                                          disabled={!ready || loading}
+                                          onClick={() => selectScene(scene.id, !checked)}
+                                          className={`flex w-full items-start gap-2 text-left ${ready ? 'cursor-pointer' : 'cursor-default'}`}
+                                          title={ready ? (checked ? 'Unselect this source clip' : 'Select this source clip') : 'Extract this clip before selecting it'}
+                                        >
+                                          <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? 'border-brass bg-brass text-white' : 'border-rule'}`}>
+                                            {checked && <Check size={10}/>}
+                                          </span>
                                           <span className="min-w-0">
                                             <span className="block text-xs text-ink">{scene.title}</span>
                                             <span className="block text-[10px] text-muted mt-1">
                                               {formatTime(scene.start)} — {formatTime(scene.end)} · {Math.max(0, (scene.end || 0) - (scene.start || 0)).toFixed(1)}s
                                             </span>
                                           </span>
-                                        </label>
+                                        </button>
                                         {scene.purpose && <p className="text-[10px] text-muted mt-2">{scene.purpose}</p>}
                                       </div>
                                     </div>
