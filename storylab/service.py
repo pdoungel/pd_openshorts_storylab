@@ -497,19 +497,12 @@ class StoryLabStore:
         return self.save(project)
 
     def _prepare_script_scenes(self, project_id: str) -> StoryProject:
-        """Make linked source visuals immediately usable by Final Assembly."""
+        """Ensure the user's selected source clips are extracted without changing selection."""
         project = self.get(project_id)
-        linked_ids = []
-        for section in project.script:
-            for scene_id in section.scene_ids:
-                if scene_id not in linked_ids:
-                    linked_ids.append(scene_id)
-        if not linked_ids:
+        selected_ids = [scene.id for scene in project.scenes if scene.selected]
+        if not selected_ids:
             return self.save(project)
-        for scene in project.scenes:
-            scene.selected = scene.id in linked_ids
-        self.save(project)
-        self.extract_scenes(project_id, linked_ids)
+        self.extract_scenes(project_id, selected_ids)
         return self.get(project_id)
 
     def select_scenes(self, project_id: str, scene_ids: list[str]) -> StoryProject:
