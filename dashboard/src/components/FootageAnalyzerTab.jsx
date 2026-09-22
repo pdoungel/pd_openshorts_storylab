@@ -131,7 +131,7 @@ export default function FootageAnalyzerTab() {
               </div>
             )}
 
-            <label className="block">
+            <div className="block">
               <span className="readout block mb-2">footage folder</span>
               <label className="btn-quiet inline-flex cursor-pointer items-center gap-2">
                 <FolderOpen size={14} />
@@ -164,26 +164,13 @@ export default function FootageAnalyzerTab() {
                 />
               </label>
               <p className="text-[11px] text-muted mt-2">Choose the folder in Finder. The folder itself is not uploaded; the analyzer reads it from the mounted Mac filesystem.</p>
-            </label>
+            </div>
 
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
-              <FolderOpen size={17} className="text-brass mt-0.5 shrink-0" />
+              {resolvingFolder ? <Loader2 size={17} className="text-brass mt-0.5 shrink-0 animate-spin" /> : footageRoot ? <CheckCircle2 size={17} className="text-brass mt-0.5 shrink-0" /> : <FolderOpen size={17} className="text-muted mt-0.5 shrink-0" /> }
               <div className="min-w-0">
                 <p className="text-sm text-ink2">{resolvingFolder ? 'Locating selected folder…' : footageFolderName || 'No footage folder selected'}</p>
                 <p className="text-xs text-muted mt-1">{footageRoot || (footageCount ? `${footageCount} video files found in the selected folder` : 'Select a footage folder from Finder.')}</p>
-              </div>
-            </div>
-
-            <label className="block">
-              <span className="readout block mb-2">optional browser folder preview</span>
-              <input type="file" multiple webkitdirectory="" directory="" accept="video/*" className="input-field" onChange={e => setFootage(Array.from(e.target.files || []))} />
-            </label>
-
-            <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
-              <FolderOpen size={17} className="text-brass mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm text-ink2">{footageCount ? `${footageCount} browser files selected` : footageRoot ? 'Server-side folder configured' : 'No footage folder configured'}</p>
-                <p className="text-xs text-muted mt-1">{footageCount ? `${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB selected` : 'The analyzer reads the folder directly; large libraries are not uploaded through the browser.'}</p>
               </div>
             </div>
 
