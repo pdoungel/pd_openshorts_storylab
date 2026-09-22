@@ -459,15 +459,88 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
   </div>
 </div>}
 {selected.analysis && <div className="space-y-3">
-  <div className="space-y-2">
-    <div className="flex items-center justify-between"><span className="readout">SCENE RESEARCH</span><div className="flex gap-2"><button className="btn-ghost" disabled={loading} onClick={()=>searchScenes(sceneQuery || selected.brief?.question || selected.analysis?.story?.central_question || '')}>search</button>{selected.scenes?.some(s=>s.extraction_status==='candidate') && <button className="btn-primary" disabled={loading} onClick={extractScenes}>extract {selected.scenes.filter(s=>s.extraction_status==='candidate').length} scene(s)</button>}</div></div>
-    <div className="flex flex-col sm:flex-row gap-2">
-      <input className="input-field flex-1" placeholder="Search the source by meaning or exact words" value={sceneQuery} onChange={e=>setSceneQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&searchScenes(e.target.value)} />
-      <select className="input-field sm:w-40" value={sceneEmbeddingProvider} onChange={e=>setSceneEmbeddingProvider(e.target.value)}><option value="local">Local · no model</option><option value="auto">Auto · cached model</option><option value="sentence-transformers">Pretrained · download</option></select><select className="input-field sm:w-40" value={sceneSearchMode} onChange={e=>setSceneSearchMode(e.target.value)}><option value="hybrid">Hybrid local</option><option value="embedding">Vector only</option><option value="lexical">Exact words</option></select>
+  <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <span className="readout">SCENE RESEARCH</span>
+        <p className="text-xs text-muted mt-1">
+          Story Lab automatically searches the uploaded video for timestamped clips that match each script section and its central question. These are the clips that will sit under the voiceover.
+        </p>
+      </div>
+      {selected.scenes?.some(s=>s.extraction_status==='candidate') && (
+        <button className="btn-primary shrink-0" disabled={loading} onClick={extractScenes}>
+          extract {selected.scenes.filter(s=>s.extraction_status==='candidate').length} clip(s)
+        </button>
+      )}
     </div>
-    {selected.scenes?.length ? <div className="grid md:grid-cols-2 gap-3">{selected.scenes.map(scene=><div key={scene.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-2"><label className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" checked={scene.selected !== false} onChange={e=>selectScene(scene.id,e.target.checked)} />{scene.title}</label><span className="text-[10px] uppercase text-muted">{scene.extraction_status}</span></div><div className="text-xs text-muted mt-1">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · relevance {Math.round(scene.relevance*100)}% · {scene.search_method || 'hybrid'}</div><p className="text-xs text-ink2 mt-2">{scene.purpose}</p><div className="flex flex-wrap gap-1 mt-2">{scene.evidence_ids?.map(id=><span key={id} className="text-[10px] rounded border border-rule px-1.5 py-0.5 text-muted">{id.slice(-6)}</span>)}</div><div className="mt-3">{scene.output_file ? <video className="w-full aspect-video rounded border border-rule bg-black object-contain" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} /> : <div className="w-full aspect-video rounded border border-dashed border-rule bg-paper3 flex items-center justify-center text-xs text-muted">Select this scene to extract the preview.</div>}<div className="flex items-center justify-between gap-2 mt-1"><p className="text-[10px] text-muted">source visual · {scene.extraction_status}</p>{scene.output_file && <a className="text-[10px] text-brass underline" href={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} target="_blank" rel="noreferrer">open clip</a>}</div></div></div>)}</div> : <p className="text-xs text-muted">Analyze the project, then Story Lab can search timestamp-backed source moments without Ollama or a cloud embedding service.</p>}
+
+    <div className="rounded border border-rule p-3">
+      <div className="text-[10px] uppercase tracking-wide text-brass">EDITORIAL QUESTION</div>
+      <div className="text-sm text-ink mt-1">{selected.brief?.question || selected.analysis?.story?.central_question || 'No central question set'}</div>
+      <p className="text-[10px] text-muted mt-1">The question is used together with each script section to find relevant source moments.</p>
+    </div>
+
+    {selected.script?.length ? (
+      <div className="space-y-2">
+        {selected.script.map((section, index) => {
+          const sectionScenes = sceneById(section.scene_ids || []);
+          return (
+            <div key={section.id} className="rounded border border-rule bg-paper p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-brass">{String(index + 1).padStart(2,'0')} · {section.heading}</div>
+                  <p className="text-xs text-ink mt-1">{section.narration}</p>
+                </div>
+                <span className="text-[10px] text-muted shrink-0">{sectionScenes.length} clip{sectionScenes.length === 1 ? '' : 's'}</span>
+              </div>
+              {sectionScenes.length ? (
+                <div className="mt-3 space-y-2">
+                  {sectionScenes.map(scene => (
+                    <div key={scene.id} className="rounded border border-rule p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 text-xs text-ink">
+                          <input type="checkbox" checked={scene.selected !== false} onChange={e=>selectScene(scene.id,e.target.checked)} />
+                          {scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s
+                        </label>
+                        <span className="text-[10px] uppercase text-muted">{scene.extraction_status}</span>
+                      </div>
+                      <p className="text-[11px] text-ink2 mt-1">{scene.purpose}</p>
+                      {scene.output_file ? (
+                        <video className="w-full aspect-video rounded border border-rule bg-black object-contain mt-2" controls playsInline preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} />
+                      ) : (
+                        <div className="mt-2 aspect-video rounded border border-dashed border-rule bg-paper3 flex items-center justify-center text-xs text-muted">
+                          Clip will be extracted automatically.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 rounded border border-dashed border-rule p-2 text-[11px] text-muted">
+                  No timestamped clip was found for this section. The narration will not be treated as visually supported until a source moment is found.
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    ) : (
+      <p className="text-xs text-muted">Run Analyze Story after setting the question. Story Lab will then build the narration and find the matching source clips automatically.</p>
+    )}
+
+    <details className="rounded border border-rule p-3">
+      <summary className="cursor-pointer text-xs text-ink">Manual scene search</summary>
+      <div className="mt-3 space-y-2">
+        <input className="input-field w-full" placeholder="Optional: search the source for a specific moment" value={sceneQuery} onChange={e=>setSceneQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&searchScenes(e.target.value)} />
+        <div className="flex gap-2">
+          <select className="input-field flex-1" value={sceneEmbeddingProvider} onChange={e=>setSceneEmbeddingProvider(e.target.value)}><option value="local">Local · no model</option><option value="auto">Auto · cached model</option><option value="sentence-transformers">Pretrained · download</option></select>
+          <select className="input-field flex-1" value={sceneSearchMode} onChange={e=>setSceneSearchMode(e.target.value)}><option value="hybrid">Hybrid local</option><option value="embedding">Vector only</option><option value="lexical">Exact words</option></select>
+          <button className="btn-ghost" disabled={loading} onClick={()=>searchScenes(sceneQuery)}>search</button>
+        </div>
+      </div>
+    </details>
   </div>
-</div>}{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
+</div>{selected.analysis?.evidence?.length>0 && <div className="space-y-4">
   <div className="rounded-input border border-brass/30 bg-paper3 p-4 space-y-3">
     <div className="flex items-center justify-between gap-3">
       <div><span className="readout">EVIDENCE FOR THIS ANGLE</span><p className="text-xs text-muted mt-1">Only evidence linked to the generated question, theory, story sections and counterpoints is shown here. The full transcript remains available below.</p></div>
