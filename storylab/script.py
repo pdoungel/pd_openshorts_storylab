@@ -40,6 +40,35 @@ def _fallback_slice(evidence: list[Evidence], start: int, stop: int) -> list[Evi
     return evidence[start:stop] if evidence else []
 
 
+def _clean_script_narration(narration: str, evidence: list[Evidence], previous: list[str]) -> str:
+    """Prevent duplicated/placeholder narration from reaching the production script."""
+    text = " ".join((narration or "").split()).strip()
+    lowered = text.lower()
+    placeholder_prefixes = (
+        "identify the competing goals",
+        "separate what the sources establish",
+        "keep interpretation visibly separate",
+        "use the cited record to explain what changed",
+    )
+    if not text or any(lowered.startswith(prefix) for prefix in placeholder_prefixes):
+        text = " ".join(item.claim for item in evidence[:3] if item.claim).strip()
+    if not text:
+        return ""
+    def words(value: str) -> set[str]:
+        return {w for w in __import__("re").findall(r"[a-z0-9']+", value.lower()) if len(w) > 3}
+    current = words(text)
+    for old in previous:
+        old_words = words(old)
+        if current and old_words:
+            overlap = len(current & old_words) / max(1, len(current | old_words))
+            if overlap >= 0.72:
+                alternative = " ".join(item.supporting_text or item.claim for item in evidence[:3]).strip()
+                if alternative and words(alternative) != current:
+                    text = alternative
+                    break
+    return text
+
+
 def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "movie") -> list[ScriptSection]:
     """Build a reusable outline for any Story Lab format or editorial angle.
 
@@ -50,6 +79,7 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
     story = analysis.story
     insights = analysis.insights
     sections = []
+    used_narration: list[str] = []
 
     def select_insights(types=None, limit=4):
         allowed = set(types or [])
@@ -72,11 +102,17 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
         return narration.strip(), ids, rows
 
     hook_evidence = _evidence_by_ids(analysis, story.hook_evidence_ids) or _fallback_slice(evidence, 0, 2)
-    sections.append(_section("Hook", story.hook or analysis.summary[:500], hook_evidence))
+    hook_text = _clean_script_narration(story.hook or analysis.summary[:500], hook_evidence, used_narration)
+    if hook_text:
+        sections.append(_section("Hook", hook_text, hook_evidence))
+        used_narration.append(hook_text)
 
     if story.context:
         context_evidence = _evidence_by_ids(analysis, story.context_evidence_ids) or _fallback_slice(evidence, 0, 3)
-        sections.append(_section("Context", story.context, context_evidence))
+        context_text = _clean_script_narration(story.context, context_evidence, used_narration)
+        if context_text:
+            sections.append(_section("Context", context_text, context_evidence))
+            used_narration.append(context_text)
 
     if angle == "why":
         plans = [
@@ -148,9 +184,11 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
                 "Meaning / takeaway": {"theme", "interpretation"},
         }.get(heading, {"fact", "event"})
         narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
+        linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
+        if not linked:
+            linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
+        narration = _clean_script_narration(narration, linked, used_narration)
         if narration:
-            linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
-            if not linked:
-                linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
             sections.append(_section(heading, narration, linked, selected_insights))
+            used_narration.append(narration)
     return sections
