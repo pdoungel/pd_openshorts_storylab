@@ -177,7 +177,15 @@ Return JSON matching the schema. Every story component must cite supplied excerp
 - Every narrative field must be specific to its own role. Do not copy the summary into hook/context/conflict/consequences/significance, and do not concatenate unrelated evidence excerpts merely to fill a field.
 - For review/theory/why questions, distinguish what the episode shows from what the analysis infers. Answer the question only to the extent supported by the supplied source.
 - Prefer the smallest set of timestamped evidence that actually supports each component. Timestamped dialogue or narration from the uploaded video is preferred over unlocated summary text.
-- Every generated narrative field must be natural spoken English suitable for voiceover, not research instructions, placeholders, labels, or editing notes."""
+- Every generated narrative field must be natural spoken English suitable for voiceover, not research instructions, placeholders, labels, or editing notes.
+- Make the story analysis detailed enough to support a real documentary voiceover, not a short synopsis.
+- The summary should normally be 180-300 words when the source material supports it.
+- Hook, context, conflict, consequences, significance, interpretation, and central question should normally be 2-4 substantive sentences each, with concrete source-grounded details.
+- Timeline and key_events should capture the important sequence of developments rather than only naming events.
+- People should include each important person and their role or relationship when the source establishes it.
+- Insights should explain why each fact, event, clue, or relationship matters to the central question, not merely repeat the transcript.
+- For every narrative field, prefer specific details, cause-and-effect, stakes, turning points, contradictions, and consequences over generic summary language.
+- Do not add length by repeating the same fact or inventing context."""
 
         data, _ = llm_backend.generate_json(prompt, _LLMAnalysis)
         parsed = _LLMAnalysis.model_validate(data)
