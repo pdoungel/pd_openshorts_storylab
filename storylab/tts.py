@@ -185,7 +185,7 @@ def narration_text(project: StoryProject) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def narration_srt(project: StoryProject) -> str:
+def narration_srt(project: StoryProject, timeline_segments: list[VoiceoverSegment] | None = None) -> str:
     def stamp(seconds: float) -> str:
         total_ms = max(0, int(round(seconds * 1000)))
         hours, rem = divmod(total_ms, 3_600_000)
@@ -194,7 +194,8 @@ def narration_srt(project: StoryProject) -> str:
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
     rows = []
-    segments = {segment.section_id: segment for segment in (project.voiceover.segments if project.voiceover else [])}
+    source_segments = timeline_segments if timeline_segments is not None else (project.voiceover.segments if project.voiceover else [])
+    segments = {segment.section_id: segment for segment in source_segments}
     cursor = 0.0
     for index, section in enumerate(project.script, start=1):
         segment = segments.get(section.id)
@@ -325,7 +326,7 @@ def generate_voiceover(project: StoryProject, profile_id: str, output_dir: str |
     script_path = output_dir / "narration-script.txt"
     srt_path = output_dir / "narration-timing.srt"
     script_path.write_text(narration_text(project), encoding="utf-8")
-    srt_path.write_text(narration_srt(project), encoding="utf-8")
+    srt_path.write_text(narration_srt(project, segments), encoding="utf-8")
     (output_dir / "narration-segments.json").write_text(
         json.dumps([segment.model_dump() for segment in segments], ensure_ascii=False, indent=2),
         encoding="utf-8",
