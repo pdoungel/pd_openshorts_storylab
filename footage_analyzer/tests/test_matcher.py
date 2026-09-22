@@ -36,7 +36,7 @@ def test_visual_edl_uses_voiceover_clock_and_duration(semantic_rank):
     assert clip["source_start"]==10.0
     assert clip["source_end"]==15.0
     assert clip["duration_fit"]==1.0
-    assert clip["match_type"]=="related"
+    assert clip["match_type"]=="direct"
 
 
 def test_related_footage_can_fill_when_exact_visual_is_missing(semantic_rank):
