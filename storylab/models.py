@@ -185,6 +185,10 @@ class VoiceoverArtifact(BaseModel):
     audio_path: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[str] = None
+    stage: str = ""
+    message: str = ""
+    current_index: int = 0
+    total_segments: int = 0
     segments: list[VoiceoverSegment] = Field(default_factory=list)
 
 
