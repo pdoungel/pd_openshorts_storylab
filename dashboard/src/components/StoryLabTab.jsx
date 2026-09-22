@@ -542,7 +542,8 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     <button className="btn-primary" disabled={loading || selected.status !== 'approved' || selected.voiceover?.status !== 'generated'} onClick={render}><Clapperboard size={14}/> create final video</button>
   </div>
 </div>}
-{selected.script?.length>0 && <div className="space-y-4">
+{selected.script?.length > 0 && (
+<div className="space-y-4">
 <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
