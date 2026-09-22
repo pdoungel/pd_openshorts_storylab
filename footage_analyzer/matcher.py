@@ -10,6 +10,8 @@ from __future__ import annotations
 import math
 import re
 
+from .embeddings import rank_texts
+
 _TOKEN_RE = re.compile(r"[a-z0-9']+", re.I)
 
 
@@ -102,11 +104,9 @@ def _match_type(score, concept_score, requirement, shot):
 
 
 def rank(requirement, shots, topn=5):
-    from storylab.embeddings import rank_texts
-
     query = requirement.get("visual_query", "")
     texts = [_text(s) for s in shots]
-    rows = rank_texts(query, texts, mode="hybrid", provider="auto")
+    rows = rank_texts(query, texts)
     ranked = []
     for i, score, emb, lex, method in rows:
         shot = shots[i]
