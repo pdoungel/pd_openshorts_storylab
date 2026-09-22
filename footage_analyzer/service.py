@@ -56,8 +56,7 @@ class JobStore:
 
             self.update(jid,stage="visual_analysis",progress=35,message=f"Preparing visual analysis · 0/{len(shots)} shots")
             vis=work/"visual_index.json"
-            def visual_progress(done,total):
-                current=Path(shots[done-1]["video_path"]).name if done and done<=len(shots) else ""
+            def visual_progress(done,total,current):
                 self.update(jid,progress=35+int(35*done/max(total,1)),message=f"Visual analysis · {done}/{total} shots · {current}")
             data=enrich_index(str(idx),str(vis),progress=visual_progress)
             self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
