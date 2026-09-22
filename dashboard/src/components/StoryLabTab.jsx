@@ -302,17 +302,38 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     }
   };
 
+  const prepareNarration = async () => {
+    if (!selected) return;
+    setLoading(true);
+    setBusyLabel('Preparing intelligent narration…');
+    setError('');
+    try {
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/narration/prepare', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+      });
+      replaceProject(project);
+      setWorkflowStep('narration');
+    } catch (e) {
+      setError(e.message || 'Could not prepare narration.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
+    }
+  };
+
   const generateVoiceover = async () => {
     if (!selected || !voiceProfileId) return;
     setLoading(true);
-    setBusyLabel('Preparing narration…');
+    setBusyLabel('Generating Voicebox narration…');
     setError('');
     try {
-      replaceProject(await apiJson('/api/storylab/projects/' + selected.id + '/voiceover', {
+      const project = await apiJson('/api/storylab/projects/' + selected.id + '/voiceover', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({profile_id: voiceProfileId})
-      }));
+      });
+      replaceProject(project);
       setWorkflowStep('final');
     } catch (e) {
       setError(e.message || 'Voiceover generation failed.');
@@ -439,7 +460,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     if (!selected) return;
     if (step === 'angle' && !selected.analysis) return;
     if (step === 'build' && !selected.script?.length) return;
-    if (step === 'narration' && !selected.script?.length) return;
+    if (step === 'narration' && (!selected.script?.length || !selectedClips.length)) return;
     if (step === 'final' && !allScriptApproved) return;
     setWorkflowStep(step);
   };
@@ -1100,11 +1121,16 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                 <div className="space-y-6">
                   <div className="rounded-input border border-brass/40 bg-paper3 p-4">
                     <div className="readout text-brass">STEP 4 · NARRATION</div>
-                    <h3 className="font-display lowercase text-2xl text-ink mt-1">Prepare the voiceover from the selected story</h3>
+                    <h3 className="font-display lowercase text-2xl text-ink mt-1">Turn the question and selected footage into the final narration</h3>
                     <p className="text-xs text-muted mt-2">
-                      The narration follows the question-driven script that was built from the source evidence.
-                      Approve each section after checking the wording against the evidence and selected footage.
+                      First let the local intelligence layer rewrite the research script around the exact question and the clips you selected. It adds the connecting logic, keeps evidence grounded, and removes repeated material. Then approve the finished narration before Voicebox generates the audio.
                     </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button className="btn-primary text-[11px]" disabled={loading || !selectedClips.length} onClick={prepareNarration}>
+                        <Sparkles size={13}/> prepare intelligent narration
+                      </button>
+                      <span className="text-[10px] text-muted self-center">Uses the configured local LLM when available.</span>
+                    </div>
                   </div>
 
                   <div className="space-y-3">
@@ -1167,10 +1193,13 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                           disabled={!allScriptApproved || !voiceboxAvailable || !voiceProfileId || loading}
                           onClick={generateVoiceover}
                         >
-                          prepare narration & voiceover
+                          generate Voicebox voiceover
                         </button>
                       </div>
                     </div>
+                    <p className="text-[10px] text-muted mt-3">
+                      Story Lab sends each approved narration section to Voicebox separately. The returned audio duration becomes that section's exact timeline duration; the sections are then concatenated in order and the SRT is rebuilt from those measured durations.
+                    </p>
                     <div className="flex flex-wrap gap-2 mt-3">
                       <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download>
                         <FileText size={13}/> narration script
@@ -1178,7 +1207,27 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                       <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download>
                         <Clock3 size={13}/> timing SRT
                       </a>
+                      {selected.voiceover?.status === 'generated' && (
+                        <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-audio'} download>
+                          <PlayCircle size={13}/> narration audio
+                        </a>
+                      )}
                     </div>
+                    {selected.voiceover?.status === 'generated' && selected.voiceover.audio_path && (
+                      <div className="mt-4 rounded border border-rule p-3">
+                        <div className="readout">GENERATED NARRATION TIMELINE</div>
+                        <audio className="w-full mt-2" controls src={'/api/storylab/projects/' + selected.id + '/download/narration-audio'} />
+                        <div className="mt-3 space-y-1">
+                          {(selected.voiceover.segments || []).map((segment, index) => (
+                            <div key={segment.section_id} className="flex flex-wrap gap-x-2 text-[10px] text-muted">
+                              <span>{String(index + 1).padStart(2, '0')}</span>
+                              <span>{formatTime(segment.start_seconds)} → {formatTime(segment.end_seconds)}</span>
+                              <span className="text-ink2">{segment.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1284,7 +1333,11 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                 ? 'Reading the supplied sources and building the complete source story.'
                 : busyLabel === 'Building story…'
                   ? 'Applying the selected question/theory to the source evidence and finding the necessary timestamped clips.'
-                  : busyLabel === 'Rendering final video…'
+                  : busyLabel === 'Generating Voicebox narration…'
+                    ? 'Calling the local Voicebox profile for each approved narration section and assembling the returned audio timeline.'
+                  : busyLabel === 'Preparing intelligent narration…'
+                    ? 'Using the central question, source evidence and selected clips to refine the documentary narration.'
+                    : busyLabel === 'Rendering final video…'
                     ? 'Assembling the selected source footage and narration.'
                     : 'Story Lab is processing your request.'}
             </p>
