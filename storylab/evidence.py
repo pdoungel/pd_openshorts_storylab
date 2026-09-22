@@ -42,20 +42,65 @@ def _claim(text: str) -> str:
     return sentence[:500]
 
 
+def _merge_timed_segments(segments: list[TranscriptSegment], max_gap: float = 1.5, max_window: float = 18.0) -> list[TranscriptSegment]:
+    """Turn subtitle/ASR cues into meaningful dialogue windows.
+
+    Story Lab should cite a short scene of dialogue, not every subtitle cue as a
+    separate piece of evidence. Adjacent cues are merged until there is a real
+    pause or the evidence window becomes long enough to be unwieldy.
+    """
+    timed = sorted(
+        [item for item in segments if item.start is not None and item.end is not None],
+        key=lambda item: (item.start or 0.0, item.end or 0.0),
+    )
+    merged: list[TranscriptSegment] = []
+    for item in timed:
+        text = " ".join(item.text.split())
+        if not text:
+            continue
+        if not merged:
+            merged.append(TranscriptSegment(text=text, start=item.start, end=item.end, source_id=item.source_id))
+            continue
+        current = merged[-1]
+        gap = max(0.0, float(item.start or 0.0) - float(current.end or 0.0))
+        span = float(item.end or 0.0) - float(current.start or 0.0)
+        if gap <= max_gap and span <= max_window:
+            current.text = f"{current.text} {text}".strip()
+            current.end = item.end
+        else:
+            merged.append(TranscriptSegment(text=text, start=item.start, end=item.end, source_id=item.source_id))
+    return merged
+
+
 def extract_source_evidence(sources: Iterable[SourceLocator], limit: int = 80) -> list[Evidence]:
-    """Create citation records from source segments, never inferred timestamps."""
+    """Create source-grounded evidence while avoiding lyric/karaoke noise and subtitle-level fragmentation."""
     evidence = []
     for source in sources:
-        segments = source.segments or ([TranscriptSegment(text=source.text, source_id=source.id)] if source.text.strip() else [])
+        # A source explicitly identified as lyrics/karaoke is not documentary evidence.
+        source_name = (source.name or "").lower()
+        if re.search(r"(^|[\s._-])(lyrics?|karaoke|opening|ending|ost|song)([\s._-]|$)", source_name):
+            continue
+
+        segments = source.segments or (
+            [TranscriptSegment(text=source.text, source_id=source.id)]
+            if source.text.strip() else []
+        )
+        if source.kind in {"video", "audio"}:
+            segments = _merge_timed_segments(segments)
         for segment in segments:
             quote = " ".join(segment.text.split())
-            if not quote:
+            if not quote or _is_lyric_like(quote):
                 continue
             evidence.append(Evidence(
-                id=f"ev_{uuid.uuid4().hex[:12]}", source_id=source.id, start=segment.start, end=segment.end,
-                page=segment.page, label="source excerpt", claim=_claim(quote), supporting_text=quote[:2000],
+                id=f"ev_{uuid.uuid4().hex[:12]}", source_id=source.id,
+                start=segment.start, end=segment.end, page=segment.page,
+                label="source dialogue / narration" if segment.start is not None else "source excerpt",
+                claim=_claim(quote), supporting_text=quote[:2000],
                 detail=quote[:2000], confidence=1.0,
             ))
             if len(evidence) >= limit:
-                return normalize_evidence(evidence, source.duration if source.kind in {"video", "audio"} else None)
+                return normalize_evidence(
+                    evidence,
+                    source.duration if source.kind in {"video", "audio"} else None,
+                )
     return normalize_evidence(evidence)
