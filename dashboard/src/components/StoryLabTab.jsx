@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Film, Plus, Sparkles, Clock3, BookOpen, Lightbulb, CheckCircle2,
   FileText, Clapperboard, HelpCircle, X, ChevronRight, ChevronLeft,
-  PlayCircle, Check, Circle, Upload
+  PlayCircle, Check, Circle, Upload, Trash2
 } from 'lucide-react';
 import { apiJson } from '../lib/api';
 
@@ -146,6 +146,34 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
       setError(e.message || 'Could not create project.');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const deleteProject = async (project) => {
+    if (!project) return;
+    const confirmed = window.confirm(
+      'Delete "' + project.title + '" permanently?\\n\\nThis removes the project, source/input files, extracted clips, narration, renders, transcripts and other files created for it. This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setBusyLabel('Deleting project…');
+    setError('');
+    try {
+      await apiJson('/api/storylab/projects/' + project.id, { method: 'DELETE' });
+      setProjects(prev => prev.filter(item => item.id !== project.id));
+      if (selected?.id === project.id) {
+        setSelected(null);
+        setWorkflowStep('sources');
+        setTitle('');
+        setQuestion('');
+        setAngle('story');
+      }
+    } catch (e) {
+      setError(e.message || 'Could not delete project.');
+    } finally {
+      setLoading(false);
+      setBusyLabel('');
     }
   };
 
@@ -440,15 +468,27 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
             <p className="text-xs text-muted py-5">No Story Lab projects yet.</p>
           ) : projects.map(project => (
             <div key={project.id} className={`rounded-input border transition-colors ${selected?.id === project.id ? 'border-brass bg-paper3' : 'border-rule hover:bg-paper3/60'}`}>
-              <button
-                onClick={() => {
-                  openProject(project);
-                }}
-                className="w-full text-left p-3"
-              >
-                <div className="text-sm text-ink truncate">{project.title}</div>
-                <div className="text-[11px] text-muted mt-1">{project.kind} · {project.status}</div>
-              </button>
+              <div className="flex items-stretch">
+                <button
+                  onClick={() => {
+                    openProject(project);
+                  }}
+                  className="flex-1 min-w-0 text-left p-3"
+                >
+                  <div className="text-sm text-ink truncate">{project.title}</div>
+                  <div className="text-[11px] text-muted mt-1">{project.kind} · {project.status}</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteProject(project)}
+                  disabled={loading}
+                  title="Delete project and all files"
+                  aria-label={`Delete project ${project.title}`}
+                  className="px-3 text-muted hover:text-red-700 hover:bg-paper2 transition-colors"
+                >
+                  <Trash2 size={14}/>
+                </button>
+              </div>
             </div>
           ))}
         </section>
