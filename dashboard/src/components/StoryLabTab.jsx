@@ -37,6 +37,34 @@ const formatTime = (seconds) => {
   const s = total % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 };
+const questionSuggestions = (analysis, title) => {
+  if (!analysis) return [];
+  const suggestions = [];
+  const add = (value) => {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length < 12) return;
+    if (/what remains unsupported|available material|choose the most useful question/i.test(text)) return;
+    if (!suggestions.some(item => item.toLowerCase() === text.toLowerCase())) suggestions.push(text);
+  };
+
+  const story = analysis.story || {};
+  add(story.central_question);
+  (analysis.theories || []).slice(0, 3).forEach(theory => {
+    add(theory.title);
+    add('Does the source actually support this theory: ' + theory.claim);
+  });
+  (analysis.insights || [])
+    .filter(item => ['question', 'theory', 'interpretation', 'character', 'event'].includes(item.type))
+    .slice(0, 5)
+    .forEach(item => add(item.text || item.title));
+
+  if (story.key_events?.[0]) add('Why does ' + story.key_events[0].replace(/[.!?]+$/, '') + ' happen, and what does it change?');
+  if (story.people?.[0]) add('What does ' + story.people[0] + ' reveal about the central conflict?');
+  if (title) add('What does this episode actually establish about ' + title + ', and what is still only a theory?');
+
+  return suggestions.slice(0, 6);
+};
+
 
 export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', managed = false }) {
   const [projects, setProjects] = useState([]);
@@ -587,7 +615,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                     ))}
                   </div>
 
-                  <div className="rounded-input border border-rule p-4">
+                  <div className="rounded-input border border-brass/40 bg-paper3 p-4">
                     <label className="readout flex items-center gap-2 mb-2"><HelpCircle size={14}/> CENTRAL QUESTION / THEORY / WHY</label>
                     <textarea
                       className="input-field w-full min-h-24 resize-y"
@@ -595,6 +623,29 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
                       value={question}
                       onChange={e => setQuestion(e.target.value)}
                     />
+                    <p className="text-[11px] text-muted mt-2">
+                      Write your own question, or click one of the source-based suggestions below. These are generated from the completed source analysis, not from a generic template.
+                    </p>
+                    {questionSuggestions(selected.analysis, selected.title).length > 0 && (
+                      <div className="mt-4">
+                        <div className="readout mb-2">QUESTIONS SUGGESTED FROM THIS SOURCE</div>
+                        <div className="space-y-2">
+                          {questionSuggestions(selected.analysis, selected.title).map((suggestion, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => {
+                                setQuestion(suggestion);
+                                if (angle === 'story') setAngle('review');
+                              }}
+                              className="w-full rounded border border-rule bg-paper p-3 text-left text-xs text-ink2 hover:border-brass hover:bg-paper2 transition-colors"
+                            >
+                              <span className="text-brass mr-2">?</span>{suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-input border border-rule p-4">
