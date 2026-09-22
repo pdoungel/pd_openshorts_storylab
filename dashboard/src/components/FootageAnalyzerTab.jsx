@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, FolderOpen, Mic2, Film, Sparkles, Play, Clock3, CheckCircle2, AlertTriangle, ChevronDown, Search } from 'lucide-react';
+import { FolderOpen, Mic2, Film, Sparkles, Play, Clock3, CheckCircle2, AlertTriangle, ChevronDown, Search } from 'lucide-react';
 
 const formatTime = (seconds = 0) => {
   const s = Math.max(0, Number(seconds) || 0);
