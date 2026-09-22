@@ -67,6 +67,13 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     setProjects(prev => prev.map(p => p.id === project.id ? project : p));
   };
 
+  const openProject = (project) => {
+    setSelected(project);
+    setAngle(project.brief?.angle || 'story');
+    setQuestion(project.brief?.question || '');
+    setWorkflowStep(project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources');
+  };
+
   const load = async () => {
     try {
       const data = await apiJson('/api/storylab/projects');
@@ -102,7 +109,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
         })
       });
       setProjects(prev => [project, ...prev]);
-      setSelected(project);
+      openProject(project);
       setWorkflowStep('sources');
       setTitle('');
       setQuestion('');
@@ -407,8 +414,7 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
             <div key={project.id} className={`rounded-input border transition-colors ${selected?.id === project.id ? 'border-brass bg-paper3' : 'border-rule hover:bg-paper3/60'}`}>
               <button
                 onClick={() => {
-                  setSelected(project);
-                  setWorkflowStep(project.analysis ? (project.script?.length ? 'build' : 'angle') : 'sources');
+                  openProject(project);
                 }}
                 className="w-full text-left p-3"
               >
