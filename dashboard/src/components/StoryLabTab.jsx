@@ -499,102 +499,256 @@ export default function StoryLabTab({ uploadPostKey = '', uploadUserId = '', man
     </div>
   </details>
 </div>}{selected.script?.length>0 && <div className="space-y-2"><div className="flex justify-between items-center"><span className="readout">SCRIPT & VISUAL RESEARCH</span>{selected.status==='approved' && <button className="btn-primary" disabled={loading} onClick={render}><Clapperboard size={14}/> create final video</button>}</div>{selected.script.map(section=><div key={section.id} className="rounded-input border border-rule p-3"><div className="flex justify-between gap-3"><div><div className="text-sm text-ink">{section.heading} · {section.duration_seconds}s</div><p className="text-xs text-muted mt-1">{section.narration}</p><p className="text-xs text-muted mt-2">Visual: {section.visual_suggestions?.map(v=>v.material_type.replace('_',' ')).join(', ')}</p>{sceneById(section.scene_ids || []).length > 0 && <div className="mt-3 rounded border border-rule p-2"><div className="text-[10px] uppercase tracking-wide text-brass">SOURCE SCENES</div><div className="mt-2 space-y-2">{sceneById(section.scene_ids || []).map(scene=><div key={scene.id} className="flex items-center justify-between gap-2"><div><div className="text-xs text-ink">{scene.title}</div><div className="text-[10px] text-muted">{scene.start.toFixed(3)}s — {scene.end.toFixed(3)}s · {scene.extraction_status}</div></div>{scene.extraction_status==='candidate' && <button className="btn-ghost text-[10px]" disabled={loading} onClick={()=>extractScenes([scene.id])}>extract scene</button>}</div>)}</div></div>}{section.visual_research?.length>0 && <div className="mt-3 space-y-2">{section.visual_research.map(v=><div key={v.id} className="rounded border border-rule p-2"><div className="flex justify-between gap-2"><span className="text-xs text-ink">{v.material_type.replace('_',' ')}: {v.description}</span><button className="btn-ghost text-[11px]" disabled={loading||v.status==='approved'} onClick={()=>reviewVisual(v)}>{v.status==='approved'?'visual approved':'approve visual'}</button></div><p className="text-[10px] text-muted mt-1">{v.evidence_ids?.length||0} evidence link(s){v.source_id ? ' · source linked' : ' · asset needed'}</p></div>)}</div>}</div><button className="btn-ghost" disabled={loading||section.approved} onClick={()=>review(section)}>{section.approved ? <><CheckCircle2 size={14}/> approved</> : 'approve'}</button></div></div>)}</div>}
-{selected.script?.length>0 && <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
-  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-    <div>
-      <span className="readout">FINAL ASSEMBLY</span>
-      <p className="text-xs text-muted mt-1">This is the production hand-off: script sections, approved narration and selected source visuals are brought together here in the exact order used by the renderer.</p>
-    </div>
-    <div className="flex flex-wrap items-center gap-2 text-[11px]">
-      <span className="rounded-full border border-rule px-2 py-1">{selected.script.filter(s=>s.approved).length}/{selected.script.length} script approved</span>
-      <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes||[]).filter(s=>s.selected !== false).length} scenes selected</span>
-      <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes||[]).filter(s=>s.selected !== false && s.extraction_status === 'extracted').length} visuals extracted</span>
-    </div>
-  </div>
-  <div className="space-y-2">
-    {selected.script.map((section, index) => {
-      const sectionScenes = sceneById(section.scene_ids || []).filter(scene => scene.selected !== false);
-      return <div key={section.id} className="rounded-input border border-rule bg-paper p-3">
-        <div className="flex items-start gap-3">
-          <div className="text-[11px] text-muted w-6 pt-1">{String(index + 1).padStart(2,'0')}</div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div className="text-sm text-ink">{section.heading}</div>
-              <span className="text-[10px] uppercase text-muted">{section.duration_seconds}s · {section.approved ? 'approved' : 'needs approval'}</span>
-            </div>
-            <p className="text-xs text-ink2 mt-2 leading-relaxed">{section.narration}</p>
-            {sectionScenes.length ? <div className="grid sm:grid-cols-2 gap-2 mt-3">
-              {sectionScenes.map(scene => <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black">
-                {scene.output_file ? <video className="w-full aspect-video object-cover" controls preload="metadata" src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'} /> : <div className="aspect-video flex items-center justify-center text-[10px] text-muted bg-paper3">visual not extracted</div>}
-                <div className="bg-paper px-2 py-1.5">
-                  <div className="text-[11px] text-ink truncate">{scene.title}</div>
-                  <div className="text-[10px] text-muted">{scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s</div>
-                </div>
-              </div>)}
-            </div> : <div className="mt-3 rounded border border-dashed border-rule p-3 text-[11px] text-muted">No selected source visual is linked to this section yet. Use Scene Research to search for a timestamp-backed moment, select it, and extract it.</div>}
-          </div>
-        </div>
-      </div>;
-    })}
-  </div>
-  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-    <p className="text-[11px] text-muted">Final render uses the approved script, extracted section-linked source scenes and the generated Voicebox narration. Nothing is published automatically.</p>
-    <button className="btn-primary" disabled={loading || selected.status !== 'approved' || selected.voiceover?.status !== 'generated'} onClick={render}><Clapperboard size={14}/> create final video</button>
-  </div>
-</div>}
 {selected.script?.length > 0 && (
-  <div className="space-y-4">
-    <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
-  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-    <div>
-      <span className="readout">NARRATION & VOICEOVER</span>
-      <p className="text-xs text-muted mt-1">The narration is generated from the approved Story Lab script, so it follows the same question, theory/why angle, evidence and conclusion used by the video.</p>
-    </div>
-    <div className="flex flex-wrap gap-2">
-      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download><FileText size={13}/> narration script</a>
-      <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download><FileText size={13}/> timing SRT</a>
-    </div>
-  </div>
-  <div className="rounded border border-rule p-3">
-    <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-      <div className="flex-1">
-        <label className="eyebrow block mb-1.5">LOCAL VOICEBOX VOICE</label>
-        {voiceboxProfiles.length ? <select className="input-field w-full" value={voiceProfileId} onChange={e=>setVoiceProfileId(e.target.value)}>{voiceboxProfiles.map(profile=><option key={profile.id} value={profile.id}>{profile.name} · {profile.language || 'en'}</option>)}</select> : <div className="text-xs text-muted border border-dashed border-rule rounded p-3">{voiceboxLoading ? 'Checking Voicebox…' : voiceboxAvailable ? 'No Voicebox profiles found. Create a voice profile in Voicebox first.' : 'Voicebox is not connected.'}</div>}
+  <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div>
+        <span className="readout">FINAL ASSEMBLY</span>
+        <p className="text-xs text-muted mt-1">This is the production hand-off: script sections, approved narration and selected source visuals are brought together here in the exact order used by the renderer.</p>
       </div>
-      <div className="flex gap-2">
-        <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>refresh</button>
-        <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>generate voiceover</button>
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="rounded-full border border-rule px-2 py-1">{selected.script.filter(s => s.approved).length}/{selected.script.length} script approved</span>
+        <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes || []).filter(s => s.selected !== false).length} scenes selected</span>
+        <span className="rounded-full border border-rule px-2 py-1">{(selected.scenes || []).filter(s => s.selected !== false && s.extraction_status === 'extracted').length} visuals extracted</span>
       </div>
     </div>
-    {selected.voiceover?.status === 'generated' && <p className="text-[11px] text-emerald-700 mt-2">Voiceover generated with Voicebox and mixed into the latest final video.</p>}
-    {selected.voiceover?.status === 'error' && <p className="text-[11px] text-warn mt-2">Voiceover failed: {selected.voiceover.error}</p>}
-    <p className="text-[10px] text-muted mt-2">No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.</p>
+
+    <div className="space-y-2">
+      {selected.script.map((section, index) => {
+        const sectionScenes = sceneById(section.scene_ids || []).filter(scene => scene.selected !== false);
+        return (
+          <div key={section.id} className="rounded-input border border-rule bg-paper p-3">
+            <div className="flex items-start gap-3">
+              <div className="text-[11px] text-muted w-6 pt-1">{String(index + 1).padStart(2, '0')}</div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="text-sm text-ink">{section.heading}</div>
+                  <span className="text-[10px] uppercase text-muted">
+                    {section.duration_seconds}s · {section.approved ? 'approved' : 'needs approval'}
+                  </span>
+                </div>
+                <p className="text-xs text-ink2 mt-2 leading-relaxed">{section.narration}</p>
+
+                {sectionScenes.length > 0 && (
+                  <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                    {sectionScenes.map(scene => (
+                      <div key={scene.id} className="rounded border border-rule overflow-hidden bg-black">
+                        {scene.output_file ? (
+                          <video
+                            className="w-full aspect-video object-cover"
+                            controls
+                            preload="metadata"
+                            src={'/api/storylab/projects/' + selected.id + '/scenes/' + scene.id + '/file'}
+                          />
+                        ) : (
+                          <div className="aspect-video flex items-center justify-center text-[10px] text-muted bg-paper3">
+                            visual not extracted
+                          </div>
+                        )}
+                        <div className="bg-paper px-2 py-1.5">
+                          <div className="text-[11px] text-ink truncate">{scene.title}</div>
+                          <div className="text-[10px] text-muted">
+                            {scene.start.toFixed(1)}s — {scene.end.toFixed(1)}s
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {sectionScenes.length === 0 && (
+                  <div className="mt-3 rounded border border-dashed border-rule p-3 text-[11px] text-muted">
+                    No selected source visual is linked to this section yet. Use Scene Research to search for a timestamp-backed moment, select it, and extract it.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+      <p className="text-[11px] text-muted">
+        Final render uses the approved script, extracted section-linked source scenes and the generated Voicebox narration. Nothing is published automatically.
+      </p>
+      <button
+        className="btn-primary"
+        disabled={loading || selected.status !== 'approved' || selected.voiceover?.status !== 'generated'}
+        onClick={render}
+      >
+        <Clapperboard size={14}/> create final video
+      </button>
+    </div>
   </div>
-</div>
+)}
+
+{selected.script?.length > 0 && (
+  <div className="rounded-input border border-brass/40 bg-paper3 p-4 space-y-4">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div>
+        <span className="readout">NARRATION & VOICEOVER</span>
+        <p className="text-xs text-muted mt-1">
+          The narration is generated from the approved Story Lab script, so it follows the same question, theory/why angle, evidence and conclusion used by the video.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration'} download>
+          <FileText size={13}/> narration script
+        </a>
+        <a className="btn-ghost text-[11px]" href={'/api/storylab/projects/' + selected.id + '/download/narration-srt'} download>
+          <FileText size={13}/> timing SRT
+        </a>
+      </div>
+    </div>
+
+    <div className="rounded border border-rule p-3">
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="flex-1">
+          <label className="eyebrow block mb-1.5">LOCAL VOICEBOX VOICE</label>
+          {voiceboxProfiles.length > 0 ? (
+            <select className="input-field w-full" value={voiceProfileId} onChange={e => setVoiceProfileId(e.target.value)}>
+              {voiceboxProfiles.map(profile => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name} · {profile.language || 'en'}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="text-xs text-muted border border-dashed border-rule rounded p-3">
+              {voiceboxLoading
+                ? 'Checking Voicebox…'
+                : voiceboxAvailable
+                  ? 'No Voicebox profiles found. Create a voice profile in Voicebox first.'
+                  : 'Voicebox is not connected.'}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button className="btn-ghost text-[11px]" disabled={voiceboxLoading || loading} onClick={loadVoicebox}>
+            refresh
+          </button>
+          <button className="btn-primary text-[11px]" disabled={!voiceboxAvailable || !voiceProfileId || loading} onClick={generateVoiceover}>
+            generate voiceover
+          </button>
+        </div>
+      </div>
+
+      {selected.voiceover?.status === 'generated' && (
+        <p className="text-[11px] text-emerald-700 mt-2">
+          Voiceover generated with Voicebox and mixed into the latest final video.
+        </p>
+      )}
+      {selected.voiceover?.status === 'error' && (
+        <p className="text-[11px] text-warn mt-2">
+          Voiceover failed: {selected.voiceover.error}
+        </p>
+      )}
+      <p className="text-[10px] text-muted mt-2">
+        No ElevenLabs account or cloud API is required. Story Lab talks to the local Voicebox server on your computer.
+      </p>
+    </div>
+  </div>
+)}
+
 {selected.renders?.length > 0 && (
-<div className="rounded-input border border-rule p-4 space-y-4"><div className="flex items-center justify-between gap-3"><div><span className="readout">FINAL VIDEO</span><p className="text-xs text-muted mt-1">The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.</p></div>{selected.renders[selected.renders.length-1].status === 'rendered' && <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download><FileText size={14}/> download final video</a>}</div><div className="text-xs text-muted">Latest render: {selected.renders[selected.renders.length-1].status}. Selected clips are extracted automatically and assembled in script order.</div>{selected.youtube && <div className="rounded border border-rule p-3 space-y-4">
-  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-    <div><span className="readout">YOUTUBE UPLOAD PACKAGE</span><p className="text-[11px] text-muted mt-1">Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.</p></div>
-    <button className="btn-ghost text-[11px]" type="button" onClick={copyAllMetadata}><Copy size={13}/>{copiedMetadata === 'all' ? 'copied all' : 'copy all'}</button>
-  </div>
-  <div>
-    <div className="flex items-center justify-between gap-2 mb-1.5"><label className="eyebrow">YOUTUBE TITLE</label><button type="button" className="btn-ghost text-[10px]" onClick={()=>copyMetadata('title', selected.youtube.title || '')}><>{copiedMetadata === 'title' ? <Check size={13}/> : <Copy size={13}/>}</> {copiedMetadata === 'title' ? 'copied' : 'copy'}</button></div>
-    <input className="input-field w-full" maxLength={100} value={selected.youtube.title || ''} onChange={e=>replaceProject({...selected,youtube:{...selected.youtube,title:e.target.value}})} onBlur={()=>saveYoutube({title:selected.youtube.title})} placeholder="Video title"/>
-  </div>
-  <div>
-    <div className="flex items-center justify-between gap-2 mb-1.5"><label className="eyebrow">YOUTUBE DESCRIPTION</label><button type="button" className="btn-ghost text-[10px]" onClick={()=>copyMetadata('description', selected.youtube.description || '')}><>{copiedMetadata === 'description' ? <Check size={13}/> : <Copy size={13}/>}</> {copiedMetadata === 'description' ? 'copied' : 'copy'}</button></div>
-    <textarea className="input-field w-full min-h-40 resize-y" maxLength={5000} value={selected.youtube.description || ''} onChange={e=>replaceProject({...selected,youtube:{...selected.youtube,description:e.target.value}})} onBlur={()=>saveYoutube({description:selected.youtube.description})} placeholder="Video description"/>
-  </div>
-  <div>
-    <div className="flex items-center justify-between gap-2 mb-1.5"><label className="eyebrow">YOUTUBE TAGS</label><button type="button" className="btn-ghost text-[10px]" onClick={()=>copyMetadata('tags', (selected.youtube.tags || []).join(', '))}><>{copiedMetadata === 'tags' ? <Check size={13}/> : <Copy size={13}/>}</> {copiedMetadata === 'tags' ? 'copied' : 'copy'}</button></div>
-    <input className="input-field w-full" value={(selected.youtube.tags || []).join(', ')} onChange={e=>replaceProject({...selected,youtube:{...selected.youtube,tags:e.target.value.split(',').map(v=>v.trim()).filter(Boolean)}})} onBlur={()=>saveYoutube({tags:selected.youtube.tags || []})} placeholder="tag 1, tag 2, tag 3"/>
-    <p className="text-[10px] text-muted mt-1">Copy uses comma-separated tags, ready to paste into YouTube's tags field.</p>
-  </div>
-  <div className="flex flex-wrap gap-2">
-    <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download><FileText size={13}/> download metadata JSON</a>
-  </div>
+  <div className="rounded-input border border-rule p-4 space-y-4">
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <span className="readout">FINAL VIDEO</span>
+        <p className="text-xs text-muted mt-1">
+          The approved script and selected source visuals have been assembled into a video-ready MP4. Nothing is published automatically.
+        </p>
+      </div>
+      {selected.renders[selected.renders.length - 1].status === 'rendered' && (
+        <a className="btn-primary" href={'/api/storylab/projects/' + selected.id + '/download/render'} download>
+          <FileText size={14}/> download final video
+        </a>
+      )}
     </div>
-  )}
+
+    <div className="text-xs text-muted">
+      Latest render: {selected.renders[selected.renders.length - 1].status}. Selected clips are extracted automatically and assembled in script order.
+    </div>
+
+    {selected.youtube && (
+      <div className="rounded border border-rule p-3 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <span className="readout">YOUTUBE UPLOAD PACKAGE</span>
+            <p className="text-[11px] text-muted mt-1">
+              Same quick-copy workflow as OpenShorts: edit the generated title, description and tags, then copy each field directly into YouTube Studio. Story Lab never publishes automatically.
+            </p>
+          </div>
+          <button className="btn-ghost text-[11px]" type="button" onClick={copyAllMetadata}>
+            <Copy size={13}/>{copiedMetadata === 'all' ? 'copied all' : 'copy all'}
+          </button>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <label className="eyebrow">YOUTUBE TITLE</label>
+            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('title', selected.youtube.title || '')}>
+              {copiedMetadata === 'title' ? <Check size={13}/> : <Copy size={13}/>}
+              {copiedMetadata === 'title' ? 'copied' : 'copy'}
+            </button>
+          </div>
+          <input
+            className="input-field w-full"
+            maxLength={100}
+            value={selected.youtube.title || ''}
+            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, title: e.target.value}})}
+            onBlur={() => saveYoutube({title: selected.youtube.title})}
+            placeholder="Video title"
+          />
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <label className="eyebrow">YOUTUBE DESCRIPTION</label>
+            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('description', selected.youtube.description || '')}>
+              {copiedMetadata === 'description' ? <Check size={13}/> : <Copy size={13}/>}
+              {copiedMetadata === 'description' ? 'copied' : 'copy'}
+            </button>
+          </div>
+          <textarea
+            className="input-field w-full min-h-40 resize-y"
+            maxLength={5000}
+            value={selected.youtube.description || ''}
+            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, description: e.target.value}})}
+            onBlur={() => saveYoutube({description: selected.youtube.description})}
+            placeholder="Video description"
+          />
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <label className="eyebrow">YOUTUBE TAGS</label>
+            <button type="button" className="btn-ghost text-[10px]" onClick={() => copyMetadata('tags', (selected.youtube.tags || []).join(', '))}>
+              {copiedMetadata === 'tags' ? <Check size={13}/> : <Copy size={13}/>}
+              {copiedMetadata === 'tags' ? 'copied' : 'copy'}
+            </button>
+          </div>
+          <input
+            className="input-field w-full"
+            value={(selected.youtube.tags || []).join(', ')}
+            onChange={e => replaceProject({...selected, youtube: {...selected.youtube, tags: e.target.value.split(',').map(v => v.trim()).filter(Boolean)}})}
+            onBlur={() => saveYoutube({tags: selected.youtube.tags || []})}
+            placeholder="tag 1, tag 2, tag 3"
+          />
+          <p className="text-[10px] text-muted mt-1">
+            Copy uses comma-separated tags, ready to paste into YouTube's tags field.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <a className="btn-ghost" href={'/api/storylab/projects/' + selected.id + '/download/metadata'} download>
+            <FileText size={13}/> download metadata JSON
+          </a>
+        </div>
+      </div>
+    )}
   </div>
 )}
       </section>
