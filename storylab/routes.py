@@ -229,6 +229,21 @@ async def download_narration(project_id: str):
     )
 
 
+@router.get("/projects/{project_id}/download/narration-audio")
+async def download_narration_audio(project_id: str):
+    try:
+        project = store.get(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Story Lab project not found")
+    if not project.voiceover or project.voiceover.status != "generated" or not project.voiceover.audio_path:
+        raise HTTPException(404, "Generated narration audio is not available.")
+    path = Path(project.voiceover.audio_path).resolve()
+    root = store.root.resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Generated narration audio is not available.")
+    return FileResponse(str(path), media_type="audio/wav", filename=f"{project.title[:80]}.narration.wav")
+
+
 @router.get("/projects/{project_id}/download/narration-srt")
 async def download_narration_srt(project_id: str):
     try:
