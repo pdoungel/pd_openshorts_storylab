@@ -36,7 +36,8 @@ def _request_json(path: str, method: str = "GET", payload: dict | None = None, t
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(_url(path), data=body, headers=headers, method=method)
+    request_url = path if str(path).startswith(("http://", "https://")) else _url(path)
+    request = urllib.request.Request(request_url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
