@@ -62,10 +62,21 @@ def _clean_script_narration(narration: str, evidence: list[Evidence], previous: 
         if current and old_words:
             overlap = len(current & old_words) / max(1, len(current | old_words))
             if overlap >= 0.72:
-                alternative = " ".join(item.supporting_text or item.claim for item in evidence[:3]).strip()
-                if alternative and words(alternative) != current:
+                alternatives = [
+                    " ".join(item.supporting_text or item.claim for item in evidence[:3]).strip()
+                    for item in evidence
+                ]
+                alternative = next(
+                    (candidate for candidate in alternatives
+                     if candidate and words(candidate) != current
+                     and all(len(words(candidate) & words(old_text)) / max(1, len(words(candidate) | words(old_text))) < 0.72
+                            for old_text in previous)),
+                    "",
+                )
+                if alternative:
                     text = alternative
-                    break
+                else:
+                    return ""
     return text
 
 
@@ -96,7 +107,12 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
         if base_ids:
             scoped = [row for row in rows if set(row.evidence_ids).intersection(base_ids)]
             rows = scoped or rows
-        ids = list(dict.fromkeys(base_ids + [eid for row in rows for eid in row.evidence_ids]))
+        # When the analyzer supplied explicit evidence for a section, keep
+        # that provenance exact. Do not append every matching insight's evidence,
+        # which was causing the same early dialogue to appear in many sections.
+        ids = list(dict.fromkeys(base_ids))
+        if not ids:
+            ids = list(dict.fromkeys(eid for row in rows for eid in row.evidence_ids))
         if not narration.strip() and rows:
             narration = " ".join(row.text for row in rows[:3]).strip()
         return narration.strip(), ids, rows
@@ -195,7 +211,10 @@ def build_script(analysis: StoryAnalysis, angle: str = "story", kind: str = "mov
         }.get(heading, {"fact", "event"})
         narration, ids, selected_insights = drive(narration, ids if isinstance(ids, list) else [], selected_types)
         linked = _evidence_by_ids(analysis, ids if isinstance(ids, list) else [])
-        if not linked:
+        # Never silently fall back to the first few source lines when a section
+        # has its own provenance. That fallback was the main source of repeated
+        # timestamps and repeated narration across unrelated sections.
+        if not linked and not ids:
             linked = _fallback_slice(evidence, 0, min(3, len(evidence)))
         narration = _clean_script_narration(narration, linked, used_narration)
         if narration:
