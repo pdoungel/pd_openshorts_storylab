@@ -18,4 +18,14 @@ python -m footage_analyzer.cli enrich --index workspace/footage_index.json --out
 python -m footage_analyzer.cli plan --voiceover workspace/voiceover.json --out workspace/visual_plan.json
 python -m footage_analyzer.cli edl --voiceover workspace/voiceover.json --index workspace/visual_index.json --plan workspace/visual_plan.json --out workspace/edl.json
 
+## Persistent indexing
+
+The analyzer stores a durable per-footage-library cache under \`workspace/footage_analyzer/library/\`. Each video gets a fingerprint (size + modification time) and an atomic status record. Successful files are reused on later runs; changed files are re-indexed; failed or interrupted files are retried. Visual shot descriptions are also saved atomically after each shot.
+
+The existing per-job \`footage_index.json\` and \`visual_index.json\` are automatically migrated into the persistent cache the first time that footage folder is analyzed, so previously completed analyses are preserved.
+
+The dashboard exposes the cache size, indexed/total file count, completed visual-analysis count, failed/retry count, and **Clear Index / Free Storage**. Clearing removes only analyzer-generated cache data; original footage is never deleted.
+
+The Docker Compose configuration mounts \`./workspace\` so the persistent index survives analyzer-container restarts.
+
 Start small before indexing the complete library.
