@@ -35,19 +35,22 @@ def _probe_duration(path):
 
 
 def _load_model(model_name, device, compute_type, progress):
-    """Load Whisper in a background thread so model download/load is observable."""
-    from faster_whisper import WhisperModel
-
+    """Load Whisper in a background thread so import/download/load is observable."""
+    # Importing faster-whisper/CTranslate2 can itself take noticeable time in a
+    # cold Docker container, so never leave the UI at 5% during that import.
+    progress(6, 0, f"🎙️ Loading Whisper runtime · {model_name}")
     started = time.monotonic()
     result = {"model": None, "error": None}
 
     def worker():
         try:
+            from faster_whisper import WhisperModel
+            cpu_threads = int(os.getenv("FOOTAGE_WHISPER_CPU_THREADS", str(max(2, min(os.cpu_count() or 4, 8)))))
             result["model"] = WhisperModel(
                 model_name,
                 device=device,
                 compute_type=compute_type,
-                cpu_threads=int(os.getenv("FOOTAGE_WHISPER_CPU_THREADS", "4")),
+                cpu_threads=cpu_threads,
             )
         except Exception as exc:
             result["error"] = exc
@@ -55,16 +58,11 @@ def _load_model(model_name, device, compute_type, progress):
     thread = threading.Thread(target=worker, daemon=True, name="whisper-model-loader")
     thread.start()
 
-    # WhisperModel may download hundreds of MB on first use. Keep the job visibly
-    # alive while that happens instead of freezing the UI at 5%.
     heartbeat = 0
     while thread.is_alive():
         elapsed = int(time.monotonic() - started)
-        progress(
-            min(9, 6 + heartbeat % 4),
-            0,
-            f"🎙️ Loading Whisper model · {model_name} · {elapsed}s",
-        )
+        progress(min(9, 6 + heartbeat % 4), 0,
+                 f"🎙️ Loading Whisper model · {model_name} · {elapsed}s")
         heartbeat += 1
         thread.join(timeout=1.0)
 
@@ -75,10 +73,7 @@ def _load_model(model_name, device, compute_type, progress):
     progress(10, 0, f"🎙️ Whisper model ready · {model_name}")
     return result["model"]
 
-
 def transcribe(path, progress=None):
-    from faster_whisper import WhisperModel
-
     model_name = os.getenv("FOOTAGE_WHISPER_MODEL", "base")
     device = os.getenv("FOOTAGE_WHISPER_DEVICE", "cpu")
     compute_type = os.getenv("FOOTAGE_WHISPER_COMPUTE", "int8")
@@ -98,7 +93,7 @@ def transcribe(path, progress=None):
         str(Path(path).expanduser().resolve()),
         word_timestamps=True,
         vad_filter=True,
-        beam_size=int(os.getenv("FOOTAGE_WHISPER_BEAM_SIZE", "5")),
+        beam_size=int(os.getenv("FOOTAGE_WHISPER_BEAM_SIZE", "1")),
         log_progress=False,
     )
 
