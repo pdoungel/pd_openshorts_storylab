@@ -33,8 +33,19 @@ def describe_shot(path,start,end):
     sheet=sample_frames(path,start,end)
     prompt=("Inspect every panel in this footage contact sheet. Return JSON with description, subjects, actions, setting, visual_style, text_visible, tags. "
             "Describe only visible evidence; do not infer identity, date, event, location, or historical facts.")
-    r=genai.Client(api_key=key).models.generate_content(model=os.getenv("FOOTAGE_VISION_MODEL","gemini-2.5-flash"),contents=[prompt,sheet])
-    data=_json(getattr(r,"text",""))
+    last_error=None
+    for attempt in range(2):
+        try:
+            client=genai.Client(api_key=key)
+            r=client.models.generate_content(model=os.getenv("FOOTAGE_VISION_MODEL","gemini-2.5-flash"),contents=[prompt,sheet])
+            data=_json(getattr(r,"text",""))
+            break
+        except Exception as exc:
+            last_error=exc
+            if "client has been closed" not in str(exc).lower() or attempt==1:
+                raise
+    else:
+        raise last_error
     for k in ("subjects","actions","setting","visual_style","text_visible","tags"):
         v=data.get(k,[]); data[k]=v if isinstance(v,list) else [str(v)]
     data["description"]=str(data.get("description","")).strip()
