@@ -76,7 +76,7 @@ def describe_shot(path, start, end):
         try:
             client = genai.Client(api_key=key)
             response = client.models.generate_content(
-                model=os.getenv("FOOTAGE_VISION_MODEL", "gemini-2.5-flash"),
+                model=os.getenv("FOOTAGE_VISION_MODEL", "gemini-3.6-flash"),
                 contents=[prompt, sheet],
             )
             data = _json(getattr(response, "text", ""))
