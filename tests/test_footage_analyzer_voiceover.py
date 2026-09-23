@@ -31,3 +31,16 @@ def test_overlapping_segments_are_clamped_in_voiceover_order():
         3,
     )
     assert [(s["start"], s["end"]) for s in segments] == [(0.0, 2.0), (2.0, 3.0)]
+
+
+def test_word_annotation_with_missing_end_is_ignored():
+    from footage_analyzer.voiceover import _extract_word_annotations
+
+    interaction = {
+        "annotations": [
+            {"type": "word_info", "text": "broken", "start_offset": "1s"},
+            {"type": "word_info", "text": "valid", "start_offset": "1.0s", "end_offset": "1.5s"},
+        ]
+    }
+    words = _extract_word_annotations(interaction)
+    assert words == [{"word": "valid", "start": 1.0, "end": 1.5}]
