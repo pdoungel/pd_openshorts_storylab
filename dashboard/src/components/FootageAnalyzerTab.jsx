@@ -49,7 +49,7 @@ export default function FootageAnalyzerTab() {
   const refreshIndex = async (root = footageRoot) => {
     if (!root) return;
     try {
-      const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/index?root=\${encodeURIComponent(root)}\`, { cache: 'no-store' });
+      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/index?root=${encodeURIComponent(root)}`, { cache: 'no-store' });
       if (res.ok && mountedRef.current) setIndexInfo(await res.json());
     } catch (_) {}
   };
@@ -73,7 +73,7 @@ export default function FootageAnalyzerTab() {
       let terminal = false;
       pollAbortRef.current = controller;
       try {
-        const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/jobs/\${id}\`, { signal: controller.signal, cache: 'no-store' });
+        const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${id}`, { signal: controller.signal, cache: 'no-store' });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (!mountedRef.current) return;
@@ -148,11 +148,11 @@ export default function FootageAnalyzerTab() {
     if (!window.confirm('Clear Footage Analyzer index and cached visual analysis for this folder? Original video files will NOT be deleted.')) return;
     setIndexBusy(true); setError('');
     try {
-      const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/index?root=\${encodeURIComponent(footageRoot)}\`, { method: 'DELETE' });
+      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/index?root=${encodeURIComponent(footageRoot)}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Could not clear the index');
       setIndexInfo(null); setTimeline([]); setJob(null);
-      setError(\`Index cleared · freed \${data.cleared_size || '0 B'} · original footage was not touched.\`);
+      setError(`Index cleared · freed ${data.cleared_size || '0 B'} · original footage was not touched.`);
     } catch (e) { setError(e.message || 'Could not clear the index'); }
     finally { if (mountedRef.current) setIndexBusy(false); }
   };
