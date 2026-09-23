@@ -338,11 +338,28 @@ export default function FootageAnalyzerTab() {
                       </p>
                       <span className="readout shrink-0">{job.progress || 0}%</span>
                     </div>
-                    {job.current_file && (
+                    {job.stage === 'transcription' ? (
+                      <div className="mt-2 rounded-input border border-rule bg-paper p-3 space-y-1">
+                        <p className="readout">UPLOADED VOICEOVER · ACTUALLY PROCESSING</p>
+                        <p className="text-sm text-ink2 truncate" title={job.voiceover_original_name || job.current_file}>
+                          🎙️ {job.voiceover_original_name || job.current_file || 'unknown file'}
+                        </p>
+                        {job.voiceover_job_path && (
+                          <p className="text-[10px] text-muted truncate" title={job.voiceover_job_path}>
+                            worker file · {job.voiceover_job_path}
+                          </p>
+                        )}
+                        {job.voiceover_sha256 && (
+                          <p className="text-[10px] text-muted font-mono truncate" title={job.voiceover_sha256}>
+                            SHA256 · {job.voiceover_sha256}
+                          </p>
+                        )}
+                      </div>
+                    ) : job.current_file ? (
                       <p className="text-xs text-ink2 truncate mt-2" title={job.current_file}>
-                        {job.stage === 'transcription' ? 'audio · ' : 'video · '}{job.current_file}
+                        video · {job.current_file}
                       </p>
-                    )}
+                    ) : null}
                     {job.status === 'failed' && (
                       <p className="text-[11px] text-muted mt-2 leading-relaxed">
                         Completed files and successful visual analyses were saved to the persistent index. Retry to continue with the remaining work.
