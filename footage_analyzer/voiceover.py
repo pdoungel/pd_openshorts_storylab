@@ -29,7 +29,7 @@ def _probe_duration(path):
             capture_output=True,
             text=True,
             check=True,
-            timeout=30,
+            timeout=10,
         )
         return max(0.0, float(result.stdout.strip() or 0))
     except Exception:
@@ -375,13 +375,21 @@ def transcribe(path, progress=None):
     # already used for visual analysis can transcribe the uploaded voiceover,
     # including timestamps, without downloading a Whisper model into Docker.
     if os.getenv("FOOTAGE_TRANSCRIBER","gemini").lower()=="gemini":
-        try:
-            report(6, f"🎙️ Starting Gemini transcription · {Path(path).name}")
-            return _gemini_transcribe(path, emit, duration)
-        except Exception as exc:
-            if os.getenv("FOOTAGE_GEMINI_LOCAL_FALLBACK", "1").lower() not in {"1", "true", "yes"}:
-                raise
-            report(10, f"☁️ Gemini transcription unavailable · local Whisper fallback · {type(exc).__name__}")
+        # Gemini word-level timestamp processing is limited to 30 minutes per
+        # request. Route longer voiceovers directly to local Whisper instead of
+        # waiting for a deterministic API rejection.
+        if duration and duration > 1800:
+            report(10, f"🎙️ Voiceover is {format_seconds(duration)} · using local transcription for long audio")
+        else:
+            try:
+                report(6, f"🎙️ Starting Gemini transcription · {Path(path).name}")
+                return _gemini_transcribe(path, emit, duration)
+            except Exception as exc:
+                if os.getenv("FOOTAGE_GEMINI_LOCAL_FALLBACK", "1").lower() not in {"1", "true", "yes"}:
+                    raise
+                report(10, f"☁️ Gemini transcription unavailable · local Whisper fallback · {type(exc).__name__}")
+            # fall through to local Whisper
+            
     
     model=_load_model(model_name,device,compute_type,emit)
     report(10,f"🎙️ Starting local transcription · {Path(path).name}")
