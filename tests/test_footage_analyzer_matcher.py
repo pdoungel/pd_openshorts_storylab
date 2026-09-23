@@ -56,8 +56,10 @@ def test_edl_follows_voiceover_order_and_covers_each_segment():
     assert all(c["timeline_end"] > c["timeline_start"] for c in edl)
 
 
-def test_planner_fallback_covers_every_narration_without_api():
+def test_planner_fallback_covers_every_narration_without_api(monkeypatch):
     from footage_analyzer.planner import plan
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     narrations = [
         {"index": 0, "start": 0.0, "end": 1.0, "text": "a road through the hills"},
