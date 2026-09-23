@@ -344,8 +344,13 @@ def transcribe(path, progress=None):
     # already used for visual analysis can transcribe the uploaded voiceover,
     # including timestamps, without downloading a Whisper model into Docker.
     if os.getenv("FOOTAGE_TRANSCRIBER","gemini").lower()=="gemini":
-        return _gemini_transcribe(path,progress,duration)
-
+        try:
+            return _gemini_transcribe(path, progress, duration)
+        except Exception as exc:
+            if os.getenv("FOOTAGE_GEMINI_LOCAL_FALLBACK", "1").lower() not in {"1", "true", "yes"}:
+                raise
+            report(10, f"☁️ Gemini transcription unavailable · local Whisper fallback · {type(exc).__name__}")
+    
     model=_load_model(model_name,device,compute_type,progress)
     report(10,f"🎙️ Starting transcription · {Path(path).name}")
     segments,info=model.transcribe(
