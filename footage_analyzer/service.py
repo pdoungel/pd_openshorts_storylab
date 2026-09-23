@@ -1,6 +1,6 @@
 """Job orchestration for the independent Footage Analyzer backend."""
 from __future__ import annotations
-import json, os, threading, traceback, uuid
+import json, os, threading, traceback, uuid, time
 from pathlib import Path
 from .voiceover import transcribe, sentence_segments
 from .indexer import build_index
@@ -22,7 +22,8 @@ class JobStore:
     def create(self,voiceover,footage_root,instruction=""):
         jid=str(uuid.uuid4()); root=str(Path(footage_root).expanduser().resolve())
         job={"id":jid,"status":"processing","stage":"starting","progress":0,"message":"Starting analyzer worker…","current_file":"",
-             "voiceover":voiceover,"footage_root":root,"instruction":instruction,"error":None,"result":None}
+             "voiceover":voiceover,"footage_root":root,"instruction":instruction,"error":None,"result":None,
+             "updated_at":time.time(),"update_seq":0}
         with self.lock:
             self.jobs[jid]=job; self._save(job)
         threading.Thread(target=self._run_wrapper,args=(jid,),daemon=True,name=f"footage-analyzer-{jid[:8]}").start()
@@ -40,15 +41,33 @@ class JobStore:
                                     "index_stats":self.cache_status(root) if root else {}})
 
     def get(self,jid):
-        with self.lock:
-            if jid in self.jobs:return dict(self.jobs[jid])
+        # Persisted job.json is authoritative. This prevents the UI from
+        # remaining on the initial POST response after a process restart.
         p=self.root/jid/"job.json"
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        try:
+            if p.exists():
+                disk=json.loads(p.read_text(encoding="utf-8"))
+                with self.lock:
+                    self.jobs[jid]=dict(disk)
+                return disk
+        except Exception:
+            pass
+        with self.lock:
+            return dict(self.jobs[jid]) if jid in self.jobs else None
 
     def update(self,jid,**kw):
         with self.lock:
-            if jid not in self.jobs: return
-            self.jobs[jid].update(kw); self._save(self.jobs[jid])
+            job=self.jobs.get(jid)
+            if job is None:
+                p=self.root/jid/"job.json"
+                if not p.exists(): return
+                try: job=json.loads(p.read_text(encoding="utf-8"))
+                except Exception: return
+                self.jobs[jid]=job
+            job.update(kw)
+            job["updated_at"]=time.time()
+            job["update_seq"]=int(job.get("update_seq",0))+1
+            self._save(job)
 
     def _find_previous_job(self,root,exclude=None):
         root=str(Path(root).resolve()); best=None
