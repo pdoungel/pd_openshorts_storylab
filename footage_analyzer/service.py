@@ -193,36 +193,30 @@ class JobStore:
                     )
                 tr=transcribe(str(voice), progress=transcription_progress)
                 tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
-                # Hash only after transcription so a large WAV never blocks the
-                # first useful stage. This pass is still streamed and does not load the
-                # audio into RAM.
-                self.update(
-                    jid,
-                    status="processing",
-                    stage="transcription",
-                    progress=19,
-                    message=f"🎙️ Finalizing voiceover cache identity · {voice.name}",
-                    current_file=voice.name,
-                )
-                digest=hashlib.sha256()
-                with voice.open("rb") as fh:
-                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                voice_sha256=digest.hexdigest()
-                self.update(
-                    jid,
-                    status="processing",
-                    stage="transcription",
-                    progress=19,
-                    message=f"🎙️ Voiceover cache identity ready · SHA256 {voice_sha256[:12]}…",
-                    current_file=voice.name,
-                    voiceover_sha256=voice_sha256,
-                )
+                # Do not hash multi-GB voiceovers on the critical path.
+                # Size + mtime are the durable cache fingerprint; an optional full
+                # SHA256 can be enabled explicitly for environments that require it.
+                voice_sha256=""
+                if os.getenv("FOOTAGE_HASH_VOICEOVER", "0").lower() in {"1", "true", "yes"}:
+                    self.update(
+                        jid,
+                        status="processing",
+                        stage="transcription",
+                        progress=19,
+                        message=f"🎙️ Verifying voiceover cache identity · {voice.name}",
+                        current_file=voice.name,
+                    )
+                    digest=hashlib.sha256()
+                    with voice.open("rb") as fh:
+                        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    voice_sha256=digest.hexdigest()
+
                 from .cache import atomic_json
                 atomic_json(
                     cached_tr_path,
                     {
-                        "version":2,
+                        "version":3,
                         "sha256":voice_sha256,
                         "voiceover_sha256":voice_sha256,
                         "size":voice_size,
@@ -230,8 +224,15 @@ class JobStore:
                         "transcript":tr,
                     },
                 )
-                self.update(jid,status="processing",stage="transcription",progress=20,
-                            message=f"🎙️ Transcription complete · {voice.name}",current_file=voice.name)
+                self.update(
+                    jid,
+                    status="processing",
+                    stage="transcription",
+                    progress=20,
+                    message=f"🎙️ Transcription complete · {voice.name}",
+                    current_file=voice.name,
+                    voiceover_sha256=voice_sha256,
+                )
             narr=sentence_segments(tr)
             self.update(jid,stage="transcription",progress=20,
                         message=f"🎙️ Voiceover ready · {voice.name} · {len(narr)} transcript segments",
