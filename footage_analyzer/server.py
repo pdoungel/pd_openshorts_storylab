@@ -57,7 +57,7 @@ async def resolve_folder(payload: dict):
     samples=payload.get("samples") or []
     if not folder_name or folder_name in {".",".."} or "/" in folder_name or "\\" in folder_name:
         raise HTTPException(400,"Invalid footage folder name.")
-    search_roots=[Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
+    # Compose mounts the selected host media parent at /host_media. Keep legacy mounts as fallback.\n    search_roots=[Path("/host_media"),Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
     candidates=[]; roots_seen=[]
     def onerror(_error): return None
     # Browser directory inputs do not expose a native path in standard Chromium/WebKit.
