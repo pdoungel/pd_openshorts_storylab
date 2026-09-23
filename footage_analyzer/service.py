@@ -147,13 +147,13 @@ class JobStore:
                 self.update(jid,status="processing",stage="transcription",progress=5,
                             message=f"🎙️ Transcribing audio · {voice.name}",current_file=voice.name)
                 def transcription_progress(pct, duration, message):
-                    # Keep transcription visibly active while Whisper is running.
-                    # Reserve 5–20% of the overall analyzer progress for this stage.
+                    # voiceover.py reports the analyzer-wide 5–20% range directly.
+                    # Do not remap it again or the UI would remain near 5%.
                     self.update(
                         jid,
                         status="processing",
                         stage="transcription",
-                        progress=5 + int(15 * max(0, min(100, pct)) / 100),
+                        progress=max(5, min(20, int(pct))),
                         message=message,
                         current_file=voice.name,
                     )
