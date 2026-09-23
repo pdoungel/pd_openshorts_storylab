@@ -98,12 +98,39 @@ class JobStore:
                 src=Path(j["voiceover"]); voice.parent.mkdir(parents=True,exist_ok=True)
                 import shutil; shutil.copy2(src,voice)
             tr_path=work/"voiceover.json"
+            # Keep the transcript in the persistent footage-library cache too.
+            # A new job after a crash/restart can therefore reuse transcription
+            # instead of starting the whole voiceover stage again.
+            import hashlib
+            voice_sha256=hashlib.sha256(voice.read_bytes()).hexdigest()
+            cached_tr_path=cache/"voiceover_cache.json"
+            cached_tr=None
+            if cached_tr_path.exists():
+                try:
+                    cached=json.loads(cached_tr_path.read_text(encoding="utf-8"))
+                    if cached.get("sha256")==voice_sha256 and cached.get("transcript"):
+                        cached_tr=cached["transcript"]
+                except Exception:
+                    cached_tr=None
+
             if tr_path.exists():
                 tr=json.loads(tr_path.read_text(encoding="utf-8"))
+                self.update(jid,status="processing",stage="transcription",progress=8,
+                            message=f"Voiceover transcription reused · {voice.name}",current_file=voice.name)
+            elif cached_tr is not None:
+                tr=cached_tr
+                tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
+                self.update(jid,status="processing",stage="transcription",progress=8,
+                            message=f"Voiceover transcription reused · {voice.name}",current_file=voice.name)
             else:
-                self.update(jid,status="processing",stage="transcription",progress=5,message=f"Transcribing voiceover · {voice.name}",current_file=voice.name)
+                self.update(jid,status="processing",stage="transcription",progress=5,
+                            message=f"🎙️ Transcribing audio · {voice.name}",current_file=voice.name)
                 tr=transcribe(str(voice))
                 tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
+                from .cache import atomic_json
+                atomic_json(cached_tr_path,{"version":1,"sha256":voice_sha256,"transcript":tr})
+                self.update(jid,status="processing",stage="transcription",progress=18,
+                            message=f"🎙️ Transcription complete · {voice.name}",current_file=voice.name)
             narr=sentence_segments(tr)
             if not narr: raise RuntimeError("No speech segments were detected in the voiceover.")
 
