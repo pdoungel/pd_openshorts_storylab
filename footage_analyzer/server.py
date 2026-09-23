@@ -53,13 +53,16 @@ def clear_index(root: str):
 
 @app.post("/api/footage-analyzer/resolve-folder")
 async def resolve_folder(payload: dict):
-    """Resolve a browser-selected directory without depending on File.path.
+    """Resolve a browser-selected directory without an expensive filesystem walk.
 
-    Chromium/WebKit directory inputs are allowed to omit a native filesystem
-    path and, in some desktop clients, even omit webkitRelativePath.  The
-    resolver therefore accepts file samples (name + size + relative path)
-    and identifies the real mounted directory from the Mac filesystem.
+    A normal browser deliberately does not expose the absolute Mac path.  When
+    webkitRelativePath is present we use the selected folder name; when it is
+    absent we locate one distinctive selected file first, then validate the
+    remaining samples in that file's parent.  This keeps folder selection fast
+    even when /Volumes contains large media libraries.
     """
+    import subprocess
+
     raw_name=str(payload.get("folder_name") or "").strip()
     samples=payload.get("samples") or []
     folder_name=raw_name if raw_name and raw_name not in {".",".."} and "/" not in raw_name and "\\" not in raw_name else ""
@@ -67,12 +70,6 @@ async def resolve_folder(payload: dict):
     if not samples:
         raise HTTPException(400,"No footage files were supplied by the folder picker.")
 
-    search_roots=[Path("/Users"),Path("/Volumes")]
-    skipped={".git","node_modules","__pycache__",".cache",".Trash"}
-    roots_seen=[str(p) for p in search_roots if p.exists()]
-
-    # Normalise the browser sample list. Name/size are available even when
-    # webkitRelativePath is not.
     clean=[]
     for item in samples[:20]:
         name=Path(str(item.get("name") or "")).name
@@ -88,113 +85,99 @@ async def resolve_folder(payload: dict):
     if not clean:
         raise HTTPException(400,"The folder picker returned no usable video file information.")
 
-    max_depth=12
-    candidates=[]
-
-    def onerror(_error):
-        return None
+    search_roots=[Path("/Users"),Path("/Volumes")]
+    search_roots=[p for p in search_roots if p.exists()]
 
     def file_matches(path, sample):
-        if path.name != sample["name"] or not path.is_file():
+        try:
+            return path.name == sample["name"] and path.is_file() and (
+                sample["size"] is None or path.stat().st_size == sample["size"]
+            )
+        except OSError:
             return False
-        return sample["size"] is None or path.stat().st_size == sample["size"]
 
-    # Fast path: when the browser supplied a folder name, locate that folder
-    # and verify several selected files against it.
+    def run_find(args, timeout=12):
+        try:
+            p=subprocess.run(
+                ["find", *args],
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+            return [Path(x) for x in p.stdout.splitlines() if x.strip()]
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+
+    match=None
+
+    # Fast path when the browser supplied the selected folder name.
     if folder_name:
+        candidates=[]
         for root in search_roots:
-            if not root.exists():
-                continue
-            root_depth=len(root.parts)
-            for base,dirs,_files in os.walk(root,topdown=True,onerror=onerror,followlinks=False):
-                base_path=Path(base)
-                depth=len(base_path.parts)-root_depth
-                if depth>=max_depth:
-                    dirs[:]=[]
-                    continue
-                dirs[:]=[d for d in dirs if d not in skipped and not d.startswith(".")]
-                if folder_name in dirs:
-                    candidate=base_path/folder_name
-                    if candidate.is_dir():
-                        candidates.append(candidate)
-                if len(candidates)>=100:
-                    break
-            if len(candidates)>=100:
+            candidates.extend(run_find([str(root), "-type", "d", "-name", folder_name, "-prune"], timeout=8))
+            if len(candidates)>25:
                 break
 
-        def matches_named_folder(candidate):
-            checked=0
+        def candidate_score(candidate):
+            score=0
             for sample in clean:
                 rel=sample["relative_path"]
                 parts=Path(rel).parts
-                target=None
-                if len(parts)>=2 and parts[0]==folder_name:
-                    target=candidate.joinpath(*parts[1:])
-                else:
-                    target=candidate/sample["name"]
-                if target and file_matches(target,sample):
-                    checked+=1
-                elif len(parts)>=2:
-                    return False
-            return checked >= min(3,len(clean))
+                target=(candidate.joinpath(*parts[1:]) if len(parts)>=2 and parts[0]==folder_name
+                        else candidate/sample["name"])
+                if file_matches(target,sample):
+                    score+=1
+            return score
 
-        matches=[p for p in candidates if matches_named_folder(p)]
-        if len(matches)==1:
-            match=matches[0]
-        elif len(matches)>1:
+        scored=sorted(
+            ((candidate_score(p),p) for p in candidates if p.is_dir()),
+            key=lambda x:x[0], reverse=True
+        )
+        threshold=min(3,len(clean))
+        winners=[p for score,p in scored if score>=threshold]
+        if len(winners)==1:
+            match=winners[0]
+        elif len(winners)>1 and scored and scored[0][0]>scored[1][0]:
+            match=scored[0][1]
+        elif len(winners)>1:
             raise HTTPException(409,{
                 "message":"More than one matching footage folder was found.",
-                "candidates":[str(p) for p in matches[:10]],
+                "candidates":[str(p) for p in winners[:10]],
             })
-        else:
-            match=None
-    else:
-        match=None
 
-    # Robust fallback: identify the folder from the actual selected files.
-    # This handles the exact case where the browser reports 14 files but no
-    # webkitRelativePath/folder name.
+    # Fallback when the webview strips webkitRelativePath. Search for one
+    # distinctive selected file instead of recursively walking every directory.
     if match is None:
-        sample_subset=clean[:5]
-        found_parents={}
+        ranked=sorted(
+            clean,
+            key=lambda s:(len(s["name"]), s["size"] or -1),
+            reverse=True
+        )
+        probe=ranked[0]
+        find_args=[]
         for root in search_roots:
-            if not root.exists():
-                continue
-            root_depth=len(root.parts)
-            for base,dirs,files in os.walk(root,topdown=True,onerror=onerror,followlinks=False):
-                base_path=Path(base)
-                depth=len(base_path.parts)-root_depth
-                if depth>=max_depth:
-                    dirs[:]=[]
-                    continue
-                dirs[:]=[d for d in dirs if d not in skipped and not d.startswith(".")]
-                file_set=set(files)
-                if not all(s["name"] in file_set for s in sample_subset):
-                    continue
-                score=0
-                for sample in sample_subset:
-                    target=base_path/sample["name"]
-                    if file_matches(target,sample):
-                        score+=1
-                if score==len(sample_subset):
-                    found_parents[str(base_path)]=score
-                    if len(found_parents)>20:
-                        break
-            if len(found_parents)>20:
-                break
+            find_args.extend([str(root), "-type", "f", "-name", probe["name"], "-size", f"{probe['size']}c", "-print"])
+        hits=run_find(find_args, timeout=15) if probe["size"] is not None else []
+        if not hits and probe["size"] is None:
+            find_args=[]
+            for root in search_roots:
+                find_args.extend([str(root), "-type", "f", "-name", probe["name"], "-print"])
+            hits=run_find(find_args, timeout=15)
 
-        matches=[Path(p) for p in found_parents]
-        if len(matches)==1:
-            match=matches[0]
-        elif len(matches)>1:
-            # Prefer a directory containing more of the selected sample files.
-            scored=[]
-            for candidate in matches:
-                score=sum(1 for s in clean if file_matches(candidate/s["name"],s))
-                scored.append((score,candidate))
-            scored.sort(key=lambda x:x[0],reverse=True)
-            best_score= scored[0][0] if scored else 0
-            best=[p for score,p in scored if score==best_score and score>=min(3,len(clean))]
+        parents=[]
+        for hit in hits[:100]:
+            parent=hit.parent
+            if parent not in parents:
+                parents.append(parent)
+
+        scored=[]
+        for parent in parents:
+            score=sum(1 for sample in clean if file_matches(parent/sample["name"],sample))
+            if score>=min(3,len(clean)):
+                scored.append((score,parent))
+
+        scored.sort(key=lambda x:x[0],reverse=True)
+        if scored:
+            best_score=scored[0][0]
+            best=[p for score,p in scored if score==best_score]
             if len(best)==1:
                 match=best[0]
             else:
@@ -204,16 +187,23 @@ async def resolve_folder(payload: dict):
                 })
 
     if match is None:
-        if not roots_seen:
+        if not search_roots:
             raise HTTPException(503,"The analyzer cannot see the Mac media roots. Check Docker Desktop File Sharing.")
         raise HTTPException(
             404,
             "The browser supplied the footage files, but the analyzer could not resolve their Mac folder. "
-            "The folder may be outside /Users or /Volumes, or Docker Desktop may not have access to that drive."
+            "This can happen when the folder is outside /Users or /Volumes, or when Docker Desktop has not shared the drive."
         )
 
     video_exts={".mp4",".mov",".mkv",".m4v",".webm",".avi",".mts",".m2ts",".ts"}
-    video_count=sum(1 for p in match.rglob("*") if p.is_file() and p.suffix.lower() in video_exts)
+    video_count=0
+    try:
+        for p in match.iterdir():
+            if p.is_file() and p.suffix.lower() in video_exts:
+                video_count+=1
+    except OSError:
+        pass
+
     return {
         "path":str(match),
         "folder_name":match.name,
