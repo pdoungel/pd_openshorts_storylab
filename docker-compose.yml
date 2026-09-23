@@ -34,7 +34,11 @@ services:
     volumes:
       - ./footage_analyzer:/app/footage_analyzer
       - ./workspace:/app/workspace
-      - ${HOST_MEDIA_ROOT:-/Users}:/host_media:ro
+      # The UI may resolve a folder to either location on macOS.
+      # Mount both canonical roots so the returned host path is directly usable
+      # by the analyzer; no manual HOST_MEDIA_ROOT configuration is required.
+      - /Users:/Users:ro
+      - /Volumes:/Volumes:ro
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - FOOTAGE_ANALYZER_WORKDIR=/app/workspace/footage_analyzer
