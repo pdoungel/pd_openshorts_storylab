@@ -267,20 +267,34 @@ def build_visual_edl(narrations, requirements, shots):
                 f"{remaining:.2f}s remains."
             )
 
-    # Validate the final edit before returning it.
+    # Validate the final edit before returning it. Pauses between narration
+    # segments are legitimate; inside each spoken segment there must be no gap.
     expected = sorted(edl, key=lambda c: (c["timeline_start"], c["sequence"] or 0))
-    previous_end = None
+    grouped = {}
     for sequence, clip in enumerate(expected, 1):
         clip["sequence"] = sequence
         start = float(clip["timeline_start"])
         end = float(clip["timeline_end"])
         if end <= start:
             raise RuntimeError(f"Invalid zero-length EDL clip at sequence {sequence}.")
-        if previous_end is not None and abs(start - previous_end) > 0.02:
-            raise RuntimeError(
-                f"EDL timeline gap detected before sequence {sequence}: "
-                f"{previous_end:.3f}s → {start:.3f}s."
-            )
-        previous_end = end
+        grouped.setdefault(clip["narration_index"], []).append(clip)
 
+    for n in ordered_narrations:
+        clips = grouped.get(n["index"], [])
+        if not clips:
+            raise RuntimeError(f"Narration segment {n['index']} has no visual clips.")
+        clips.sort(key=lambda c: c["timeline_start"])
+        if abs(float(clips[0]["timeline_start"]) - float(n["start"])) > 0.02:
+            raise RuntimeError(f"Narration segment {n['index']} does not start on the voiceover clock.")
+        for left, right in zip(clips, clips[1:]):
+            if abs(float(right["timeline_start"]) - float(left["timeline_end"])) > 0.02:
+                raise RuntimeError(f"Visual gap detected inside narration segment {n['index']}.")
+        if abs(float(clips[-1]["timeline_end"]) - float(n["end"])) > 0.02:
+            raise RuntimeError(f"Narration segment {n['index']} is not fully covered by footage.")
+
+    # Sequence is the final edit order. This is explicitly narration order,
+    # regardless of the order of files in the source footage folder.
+    expected.sort(key=lambda c: (c["timeline_start"], c["narration_index"], c["source_path"]))
+    for sequence, clip in enumerate(expected, 1):
+        clip["sequence"] = sequence
     return expected
