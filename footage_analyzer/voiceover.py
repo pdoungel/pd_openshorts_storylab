@@ -87,87 +87,248 @@ def _parse_json(text):
         raise ValueError("Transcription service returned non-JSON output")
 
 def _parse_timestamp(value):
-    if isinstance(value,(int,float)): return float(value)
-    s=str(value or "").strip()
-    parts=s.split(":")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s.endswith("ms"):
+        try:
+            return float(s[:-2]) / 1000.0
+        except ValueError:
+            return None
+    if s.endswith("s"):
+        s = s[:-1].strip()
+    parts = s.split(":")
     try:
-        if len(parts)==3: return int(parts[0])*3600+int(parts[1])*60+float(parts[2])
-        if len(parts)==2: return int(parts[0])*60+float(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
         return float(s)
-    except Exception: return None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_word_annotations(interaction):
+    words = []
+    for step in getattr(interaction, "steps", []) or []:
+        for content in getattr(step, "content", []) or []:
+            for annotation in getattr(content, "annotations", []) or []:
+                if getattr(annotation, "type", None) != "word_info":
+                    continue
+                text = str(getattr(annotation, "text", "") or "").strip()
+                start = _parse_timestamp(getattr(annotation, "start_offset", None))
+                end = _parse_timestamp(getattr(annotation, "end_offset", None))
+                if text and start is not None and end is not None and end > start:
+                    words.append({"word": text, "start": start, "end": end})
+    words.sort(key=lambda item: (item["start"], item["end"]))
+    return words
+
+
+def _words_to_segments(words, max_duration=8.0, max_words=18):
+    segments = []
+    current = []
+    for word in words:
+        current.append(word)
+        text = " ".join(x["word"] for x in current).strip()
+        sentence_end = bool(re.search(r"[.!?][\"'”’)]*$", word["word"]))
+        too_long = word["end"] - current[0]["start"] >= max_duration
+        too_many = len(current) >= max_words
+        if sentence_end or too_long or too_many:
+            segments.append({
+                "start": float(current[0]["start"]),
+                "end": float(current[-1]["end"]),
+                "text": text,
+                "words": current[:],
+            })
+            current = []
+    if current:
+        segments.append({
+            "start": float(current[0]["start"]),
+            "end": float(current[-1]["end"]),
+            "text": " ".join(x["word"] for x in current).strip(),
+            "words": current[:],
+        })
+    return segments
+
+
+def _normalise_segments(raw, duration):
+    out = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "")).strip()
+        start = _parse_timestamp(item.get("start"))
+        end = _parse_timestamp(item.get("end"))
+        if not text or start is None or end is None:
+            continue
+        start = max(0.0, float(start))
+        end = min(float(duration or end), float(end))
+        if end > start:
+            out.append({"start": start, "end": end, "text": text, "words": item.get("words", []) or []})
+    out.sort(key=lambda item: (item["start"], item["end"]))
+    cleaned = []
+    for item in out:
+        if cleaned and item["start"] < cleaned[-1]["end"]:
+            item["start"] = cleaned[-1]["end"]
+        if item["end"] > item["start"]:
+            cleaned.append(item)
+    return cleaned
+
+
+def _generic_audio_json(client, uploaded, model_name):
+    prompt = (
+        "Transcribe this voiceover verbatim. Return ONLY valid JSON with a segments array. "
+        "Each segment must have numeric start and end timestamps in seconds and text. "
+        "Use natural spoken phrase/sentence boundaries. Do not summarize, translate, rewrite, "
+        "or invent words."
+    )
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[prompt, uploaded],
+        config={"response_mime_type": "application/json"},
+    )
+    data = _parse_json(getattr(response, "text", ""))
+    raw = data.get("segments", []) if isinstance(data, dict) else data
+    return raw, str(data.get("language", "auto")) if isinstance(data, dict) else "auto"
+
 
 def _gemini_transcribe(path, progress, duration):
     from google import genai
-    from google.genai import types
-    key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not key: raise RuntimeError("GEMINI_API_KEY is required for Gemini transcription.")
-    model_name=os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_MODEL","gemini-3.5-transcribe")
-    progress(6,duration,f"☁️ Uploading voiceover to Gemini Transcribe · {Path(path).name}")
-    client=genai.Client(api_key=key)
-    uploaded=client.files.upload(file=str(Path(path).resolve()))
-    progress(9,duration,f"☁️ Voiceover uploaded · Gemini is transcribing · {Path(path).name}")
-    config=types.GenerateContentConfig(
-        audio_transcription_config=types.AudioTranscriptionConfig(
-            word_timestamp=True,
-        )
-    )
-    prompt=(
-        "Transcribe this voiceover verbatim. Return ONLY valid JSON. "
-        "Use this exact shape: {\"language\":\"en\",\"segments\":[{\"start\":0.0,\"end\":2.5,\"text\":\"...\"}]}."
-        " Timestamps must be seconds from the beginning of the audio. "
-        "Create one segment for each natural spoken phrase/sentence. "
-        "Do not summarize, translate, rewrite, or invent words. Preserve the spoken language."
-    )
-    started=time.monotonic()
-    result={}; error={}
-    models=[model_name]
-    fallback=os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_FALLBACK_MODEL","gemini-3.8-flash")
-    if fallback and fallback not in models: models.append(fallback)
-    response=None; last_error=None
-    for candidate in models:
-        result.clear(); error.clear(); started=time.monotonic()
-        def call(model=candidate):
-            try:
-                response=result["response"]=client.models.generate_content(model=model,contents=[uploaded,prompt],config=config)
-            except Exception as exc:
-                error["error"]=exc
-        thread=threading.Thread(target=call,daemon=True,name="gemini-transcription")
-        thread.start()
-        heartbeat=0
-        while thread.is_alive():
-            elapsed=int(time.monotonic()-started)
-            progress(min(19,10+heartbeat%10),duration,
-                     f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s · {candidate}")
-            heartbeat+=1
-            thread.join(timeout=1.0)
-        if "error" in error:
-            last_error=error["error"]
-            progress(10,duration,f"☁️ {candidate} unavailable · trying fallback")
-            continue
-        response=result.get("response")
+
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is required for Gemini transcription.")
+
+    model_name = os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
+    fallback = os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.8-flash")
+    client = genai.Client(api_key=key)
+    uploaded_result = {"file": None, "error": None}
+    upload_started = time.monotonic()
+
+    progress(6, duration, f"☁️ Uploading voiceover to Gemini · {Path(path).name}")
+
+    def upload():
         try:
-            data=_parse_json(getattr(response,"text",""))
-            break
+            uploaded_result["file"] = client.files.upload(file=str(Path(path).resolve()))
         except Exception as exc:
-            last_error=exc
-            progress(10,duration,f"☁️ {candidate} returned unusable transcript · trying fallback")
-            continue
-    else:
-        raise RuntimeError(f"Gemini transcription failed: {last_error}")
-    data=_parse_json(getattr(response,"text",""))
-    raw=data.get("segments",[]) if isinstance(data,dict) else data
-    if not isinstance(raw,list): raise ValueError("Gemini transcription JSON has no segments list.")
-    out=[]; full=[]
-    for item in raw:
-        text=str(item.get("text","")).strip() if isinstance(item,dict) else ""
-        start=_parse_timestamp(item.get("start")) if isinstance(item,dict) else None
-        end=_parse_timestamp(item.get("end")) if isinstance(item,dict) else None
-        if not text or start is None or end is None or end<=start: continue
-        out.append({"start":start,"end":end,"text":text,"words":[]})
-        full.append(text)
-    if not out: raise ValueError("Gemini returned no usable timestamped speech segments.")
-    progress(20,duration,f"☁️ Gemini transcription complete · {len(out)} segments")
-    return {"text":" ".join(full),"language":str(data.get("language","auto")) if isinstance(data,dict) else "auto","segments":out,"duration":duration}
+            uploaded_result["error"] = exc
+
+    thread = threading.Thread(target=upload, daemon=True, name="gemini-audio-upload")
+    thread.start()
+    heartbeat = 0
+    while thread.is_alive():
+        elapsed = int(time.monotonic() - upload_started)
+        progress(min(9, 6 + heartbeat % 4), duration,
+                 f"☁️ Uploading voiceover to Gemini · {Path(path).name} · {elapsed}s")
+        heartbeat += 1
+        thread.join(timeout=1.0)
+    if uploaded_result["error"] is not None:
+        raise uploaded_result["error"]
+    uploaded = uploaded_result["file"]
+    progress(9, duration, f"☁️ Voiceover uploaded · Gemini is transcribing · {Path(path).name}")
+
+    # Gemini 3.5 Transcribe provides word-level timestamps through the
+    # Interactions API. This is the supported dedicated transcription path;
+    # the old generate_content/audio_transcription_config combination is not.
+    result = {}
+    error = {}
+
+    def call_transcriber():
+        try:
+            result["interaction"] = client.interactions.create(
+                model=model_name,
+                input=[{
+                    "type": "audio",
+                    "uri": uploaded.uri,
+                    "mime_type": uploaded.mime_type,
+                }],
+                generation_config={
+                    "transcription_config": {
+                        "mode": {
+                            "type": "verbatim",
+                            "timestamp_granularities": ["word"],
+                        }
+                    }
+                },
+            )
+        except Exception as exc:
+            error["error"] = exc
+
+    started = time.monotonic()
+    thread = threading.Thread(target=call_transcriber, daemon=True, name="gemini-transcription")
+    thread.start()
+    heartbeat = 0
+    while thread.is_alive():
+        elapsed = int(time.monotonic() - started)
+        progress(min(18, 10 + heartbeat % 9), duration,
+                 f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s")
+        heartbeat += 1
+        thread.join(timeout=1.0)
+
+    if "error" not in error:
+        interaction = result.get("interaction")
+        words = _extract_word_annotations(interaction)
+        if words:
+            segments = _words_to_segments(words)
+            if segments:
+                language = "auto"
+                progress(20, duration, f"☁️ Gemini transcription complete · {len(segments)} segments")
+                return {
+                    "text": str(getattr(interaction, "output_text", "") or " ".join(s["text"] for s in segments)),
+                    "language": language,
+                    "segments": _normalise_segments(segments, duration),
+                    "duration": duration,
+                }
+
+        # A completed interaction without word annotations is not sufficient
+        # for a voiceover-master edit. Fall through to the timestamped JSON
+        # fallback rather than fabricating timing.
+        error["error"] = ValueError("Gemini Transcribe returned no word timestamp annotations.")
+
+    # Generic Gemini audio fallback. It is useful when the dedicated
+    # transcription endpoint is temporarily unavailable, while still requiring
+    # explicit timestamps in the model output.
+    if fallback:
+        progress(10, duration, f"☁️ Gemini Transcribe unavailable · trying {fallback}")
+        result.clear()
+        error.clear()
+        started = time.monotonic()
+
+        def call_fallback():
+            try:
+                raw, language = _generic_audio_json(client, uploaded, fallback)
+                result["raw"] = raw
+                result["language"] = language
+            except Exception as exc:
+                error["error"] = exc
+
+        thread = threading.Thread(target=call_fallback, daemon=True, name="gemini-audio-fallback")
+        thread.start()
+        heartbeat = 0
+        while thread.is_alive():
+            elapsed = int(time.monotonic() - started)
+            progress(min(19, 10 + heartbeat % 10), duration,
+                     f"☁️ Gemini fallback transcription · {Path(path).name} · {elapsed}s")
+            heartbeat += 1
+            thread.join(timeout=1.0)
+
+        if "error" not in error:
+            segments = _normalise_segments(result.get("raw"), duration)
+            if segments:
+                progress(20, duration, f"☁️ Gemini fallback transcription complete · {len(segments)} segments")
+                return {
+                    "text": " ".join(s["text"] for s in segments),
+                    "language": result.get("language", "auto"),
+                    "segments": segments,
+                    "duration": duration,
+                }
+
+    raise RuntimeError(
+        f"Gemini transcription failed: {error.get('error') or 'no timestamped transcript returned'}"
+    )
+
 
 def transcribe(path, progress=None):
     model_name=os.getenv("FOOTAGE_WHISPER_MODEL","base")
