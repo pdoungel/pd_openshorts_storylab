@@ -102,6 +102,8 @@ class JobStore:
             # A new job after a crash/restart can therefore reuse transcription
             # instead of starting the whole voiceover stage again.
             import hashlib
+            self.update(jid,status="processing",stage="transcription",progress=5,
+                        message=f"🎙️ Preparing audio transcription · {voice.name}",current_file=voice.name)
             voice_sha256=hashlib.sha256(voice.read_bytes()).hexdigest()
             cached_tr_path=cache/"voiceover_cache.json"
             cached_tr=None
@@ -125,7 +127,18 @@ class JobStore:
             else:
                 self.update(jid,status="processing",stage="transcription",progress=5,
                             message=f"🎙️ Transcribing audio · {voice.name}",current_file=voice.name)
-                tr=transcribe(str(voice))
+                def transcription_progress(pct, duration, message):
+                    # Keep transcription visibly active while Whisper is running.
+                    # Reserve 5–20% of the overall analyzer progress for this stage.
+                    self.update(
+                        jid,
+                        status="processing",
+                        stage="transcription",
+                        progress=5 + int(15 * max(0, min(100, pct)) / 100),
+                        message=message,
+                        current_file=voice.name,
+                    )
+                tr=transcribe(str(voice), progress=transcription_progress)
                 tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
                 from .cache import atomic_json
                 atomic_json(cached_tr_path,{"version":1,"sha256":voice_sha256,"transcript":tr})
