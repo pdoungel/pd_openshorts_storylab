@@ -67,6 +67,8 @@ def build_index(root,output,max_files=None,progress=None):
         legacy_reusable=entry.get("fingerprint") is None and entry.get("shots")
         if unchanged or legacy_reusable:
             shots=entry.get("shots") or [s for s in old_shots.values() if s.get("video_path")==key]
+            entry["fingerprint"]=fp; entry["status"]="complete"; entry["shots"]=shots; previous[key]=entry
+            atomic_json(manifest_path,previous)
             records.extend(shots); stats["reused"]+=1
             if progress: progress(number-1,len(files),path.name,stats)
             continue
