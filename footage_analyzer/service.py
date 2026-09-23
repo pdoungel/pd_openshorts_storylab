@@ -21,8 +21,11 @@ class JobStore:
 
     def create(self,voiceover,footage_root,instruction=""):
         jid=str(uuid.uuid4()); root=str(Path(footage_root).expanduser().resolve())
+        original_name=Path(voiceover).name
         job={"id":jid,"status":"processing","stage":"starting","progress":0,"message":"Starting analyzer worker…","current_file":"",
-             "voiceover":voiceover,"footage_root":root,"instruction":instruction,"error":None,"result":None,
+             "voiceover":voiceover,"voiceover_original_name":original_name,"voiceover_job_path":"",
+             "voiceover_sha256":"","voiceover_duration":0,"transcript_segment_count":0,
+             "footage_root":root,"instruction":instruction,"error":None,"result":None,
              "updated_at":time.time(),"update_seq":0}
         with self.lock:
             self.jobs[jid]=job; self._save(job)
@@ -112,10 +115,17 @@ class JobStore:
                 self.update(jid,stage="resuming",progress=2,message="Resuming persistent index…",current_file="")
                 seed_from_job(cache,previous)
             work.mkdir(parents=True,exist_ok=True)
-            voice=work / ("voiceover" + Path(j["voiceover"]).suffix)
+            # Keep the exact uploaded filename inside the job directory so the
+            # UI and persisted job state can prove which file is being processed.
+            src=Path(j["voiceover"]).resolve()
+            voice=work / Path(j.get("voiceover_original_name") or src.name).name
+            voice.parent.mkdir(parents=True,exist_ok=True)
             if not voice.exists():
-                src=Path(j["voiceover"]); voice.parent.mkdir(parents=True,exist_ok=True)
                 import shutil; shutil.copy2(src,voice)
+            self.update(jid,stage="transcription",progress=4,
+                        message=f"🎙️ Uploaded voiceover confirmed · {voice.name}",
+                        current_file=voice.name,voiceover_original_name=src.name,
+                        voiceover_job_path=str(voice))
             tr_path=work/"voiceover.json"
             # Keep the transcript in the persistent footage-library cache too.
             # A new job after a crash/restart can therefore reuse transcription
@@ -124,6 +134,10 @@ class JobStore:
             self.update(jid,status="processing",stage="transcription",progress=5,
                         message=f"🎙️ Preparing audio transcription · {voice.name}",current_file=voice.name)
             voice_sha256=hashlib.sha256(voice.read_bytes()).hexdigest()
+            self.update(jid,stage="transcription",progress=5,
+                        message=f"🎙️ Processing uploaded file · {voice.name} · SHA256 {voice_sha256[:12]}…",
+                        current_file=voice.name,voiceover_original_name=src.name,
+                        voiceover_job_path=str(voice),voiceover_sha256=voice_sha256)
             cached_tr_path=cache/"voiceover_cache.json"
             cached_tr=None
             if cached_tr_path.exists():
@@ -164,6 +178,10 @@ class JobStore:
                 self.update(jid,status="processing",stage="transcription",progress=18,
                             message=f"🎙️ Transcription complete · {voice.name}",current_file=voice.name)
             narr=sentence_segments(tr)
+            self.update(jid,stage="transcription",progress=20,
+                        message=f"🎙️ Voiceover ready · {voice.name} · {len(narr)} transcript segments",
+                        current_file=voice.name,transcript_segment_count=len(narr),
+                        voiceover_duration=float(tr.get("duration",0) or 0))
             if not narr: raise RuntimeError("No speech segments were detected in the voiceover.")
 
             self.update(jid,stage="indexing",progress=20,message="Resuming persistent footage index…")
