@@ -235,21 +235,46 @@ export default function FootageAnalyzerTab() {
                     }
                     setResolvingFolder(true);
                     try {
-                      const resolveRes = await fetch(`${ANALYZER_URL}/api/footage-analyzer/resolve-folder`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ folder_name: folderName, samples: files.slice(0, 10).map(f => ({ relative_path: f.webkitRelativePath, size: f.size })) })
+                      // Verify the analyzer service first so desktop "Load failed"
+                      // errors are not confused with filesystem mount failures.
+                      const healthRes = await fetch(ANALYZER_URL + '/health?_=' + Date.now(), {
+                        cache: 'no-store',
+                        headers: { 'Cache-Control': 'no-cache' }
+                      });
+                      if (!healthRes.ok) throw new Error('Footage Analyzer service returned HTTP ' + healthRes.status);
+                      const health = await healthRes.json().catch(() => ({}));
+                      if (health.service !== 'footage-analyzer') {
+                        throw new Error('The Footage Analyzer endpoint is reachable, but it is not the expected analyzer service.');
+                      }
+
+                      const resolveRes = await fetch(ANALYZER_URL + '/api/footage-analyzer/resolve-folder', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          folder_name: folderName,
+                          samples: files.slice(0, 20).map(f => ({
+                            relative_path: f.webkitRelativePath,
+                            size: f.size
+                          }))
+                        })
                       });
                       const resolveData = await resolveRes.json().catch(() => ({}));
                       if (!resolveRes.ok) {
-                        const detail = typeof resolveData.detail === 'string' ? resolveData.detail : resolveData.detail?.message || 'Could not locate the selected folder';
+                        const detail = typeof resolveData.detail === 'string'
+                          ? resolveData.detail
+                          : resolveData.detail?.message || 'Could not locate the selected folder (HTTP ' + resolveRes.status + ')';
                         throw new Error(detail);
                       }
+                      if (!resolveData.path) throw new Error('Analyzer located the folder request but returned no filesystem path.');
                       setFootageRoot(resolveData.path);
                       setFolderResolutionError('');
                     } catch (err) {
                       const message = err.message || 'Could not locate the selected folder';
-                      setFolderResolutionError(message);
-                      setError(message);
+                      const browserHint = /load failed|failed to fetch|networkerror|fetch/i.test(message)
+                        ? ' Analyzer service is not reachable from this app. Restart the footage-analyzer container and try again.'
+                        : '';
+                      setFolderResolutionError(message + browserHint);
+                      setError(message + browserHint);
                     } finally { setResolvingFolder(false); }
                   }}
                 />
