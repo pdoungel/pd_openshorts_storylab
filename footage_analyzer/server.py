@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from .service import JobStore
 
-BUILD_ID="footage-analyzer-mvp-2026-09-23"
+BUILD_ID="footage-analyzer-mvp-2026-09-23-hardened-transcription"
 app=FastAPI(title="OpenShorts Footage Analyzer",version="2.0-footage-mvp")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 store=JobStore()
