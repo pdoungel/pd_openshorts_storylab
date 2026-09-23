@@ -13,7 +13,7 @@ def semantic_rank(monkeypatch):
             score = 0.95 if "soldier" in low and "march" in low else 0.45
             rows.append((i, score, score, 0.0, "test-semantic"))
         return sorted(rows, key=lambda x: x[1], reverse=True)
-    monkeypatch.setattr("storylab.embeddings.rank_texts", fake_rank)
+    monkeypatch.setattr("footage_analyzer.matcher.rank_texts", fake_rank)
 
 
 def test_visual_edl_uses_voiceover_clock_and_duration(semantic_rank):
