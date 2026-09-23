@@ -4,7 +4,7 @@ import hashlib, json, subprocess
 from pathlib import Path
 from .cache import atomic_json, file_fingerprint
 
-VIDEO_EXTS={".mp4",".mov",".mkv",".m4v",".webm",".avi"}
+VIDEO_EXTS={".mp4",".mov",".mkv",".m4v",".webm",".avi",".mts",".m2ts",".ts"}
 IGNORED_NAMES={".DS_Store"}
 IGNORED_PREFIXES=("._",)
 
@@ -16,9 +16,11 @@ def media_files(root):
                   and p.suffix.lower() in VIDEO_EXTS)
 
 def probe_duration(path):
-    r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
-                      "-of","default=noprint_wrappers=1:nokey=1",str(path)],
-                     capture_output=True,text=True,check=True)
+    r=subprocess.run(
+        ["ffprobe","-v","error","-show_entries","format=duration",
+         "-of","default=noprint_wrappers=1:nokey=1",str(path)],
+        capture_output=True,text=True,check=True,timeout=30,
+    )
     value=r.stdout.strip()
     if not value: raise RuntimeError("ffprobe returned no duration")
     return float(value)
