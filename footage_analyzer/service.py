@@ -21,12 +21,23 @@ class JobStore:
 
     def create(self,voiceover,footage_root,instruction=""):
         jid=str(uuid.uuid4()); root=str(Path(footage_root).expanduser().resolve())
-        job={"id":jid,"status":"queued","stage":"queued","progress":0,"message":"Queued",
+        job={"id":jid,"status":"processing","stage":"starting","progress":0,"message":"Starting analyzer worker…","current_file":"",
              "voiceover":voiceover,"footage_root":root,"instruction":instruction,"error":None,"result":None}
         with self.lock:
             self.jobs[jid]=job; self._save(job)
-        threading.Thread(target=self.run,args=(jid,),daemon=True).start()
+        threading.Thread(target=self._run_wrapper,args=(jid,),daemon=True,name=f"footage-analyzer-{jid[:8]}").start()
         return job
+
+    def _run_wrapper(self,jid):
+        try:
+            self.run(jid)
+        except Exception as e:
+            j=self.get(jid)
+            if j and j.get("status") not in {"complete","failed"}:
+                root=j.get("footage_root","")
+                self.update(jid,status="failed",stage="error",progress=0,message=str(e),
+                             error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc(),
+                                    "index_stats":self.cache_status(root) if root else {}})
 
     def get(self,jid):
         with self.lock:
@@ -76,8 +87,11 @@ class JobStore:
         j=self.get(jid); work=self.root/jid
         root=j["footage_root"]; cache=cache_dir(self.root,root)
         try:
+            self.update(jid,status="processing",stage="starting",progress=1,message="Analyzer worker started…",current_file="")
             previous=self._find_previous_job(root,jid)
-            if previous: seed_from_job(cache,previous)
+            if previous:
+                self.update(jid,stage="resuming",progress=2,message="Resuming persistent index…",current_file="")
+                seed_from_job(cache,previous)
             work.mkdir(parents=True,exist_ok=True)
             voice=work / ("voiceover" + Path(j["voiceover"]).suffix)
             if not voice.exists():
@@ -87,7 +101,7 @@ class JobStore:
             if tr_path.exists():
                 tr=json.loads(tr_path.read_text(encoding="utf-8"))
             else:
-                self.update(jid,status="processing",stage="transcription",progress=5,message=f"Transcribing voiceover · {voice.name}")
+                self.update(jid,status="processing",stage="transcription",progress=5,message=f"Transcribing voiceover · {voice.name}",current_file=voice.name)
                 tr=transcribe(str(voice))
                 tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
             narr=sentence_segments(tr)
@@ -99,7 +113,7 @@ class JobStore:
                 s=stats or {}
                 self.update(jid,progress=20+int(15*done/max(total,1)),
                             message=f"Indexing footage · {done}/{total} · reused {s.get('reused',0)} · {name}",
-                            index_stats=s)
+                            current_file=name,index_stats=s)
             shots=build_index(root,str(idx),progress=index_progress)
             if not shots: raise RuntimeError("No video files were found in the selected footage folder.")
 
@@ -109,7 +123,7 @@ class JobStore:
                 s=stats or {}
                 self.update(jid,progress=35+int(35*done/max(total,1)),
                             message=f"Visual analysis · {done}/{total} · reused {s.get('reused',0)} · {current}",
-                            visual_stats=s)
+                            current_file=current,visual_stats=s)
             data=enrich_index(str(idx),str(vis),progress=visual_progress)
 
             self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
