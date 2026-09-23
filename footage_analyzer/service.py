@@ -133,24 +133,39 @@ class JobStore:
             import hashlib
             self.update(jid,status="processing",stage="transcription",progress=5,
                         message=f"🎙️ Preparing audio transcription · {voice.name}",current_file=voice.name)
-                        # Stream the hash so a large WAV cannot block the worker at 5% while
-            # the entire file is loaded into RAM.
-            digest=hashlib.sha256()
-            with voice.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            voice_sha256=digest.hexdigest()
-            self.update(jid,stage="transcription",progress=5,
-                        message=f"🎙️ Processing uploaded file · {voice.name} · SHA256 {voice_sha256[:12]}…",
-                        current_file=voice.name,voiceover_original_name=src.name,
-                        voiceover_job_path=str(voice),voiceover_sha256=voice_sha256)
+                        # Do not hash the entire voiceover before transcription. Large WAV files
+            # can be many GB and a full SHA256 pass can make the UI appear stuck at 5%
+            # for a very long time. Use a cheap filesystem fingerprint for cache lookup,
+            # then compute SHA256 after transcription for durable cache identity.
+            voice_stat=voice.stat()
+            voice_size=int(voice_stat.st_size)
+            voice_mtime_ns=int(voice_stat.st_mtime_ns)
+            self.update(
+                jid,
+                stage="transcription",
+                progress=5,
+                message=f"🎙️ Voiceover ready for transcription · {voice.name} · {voice_size / (1024**3):.2f} GB",
+                current_file=voice.name,
+                voiceover_original_name=src.name,
+                voiceover_job_path=str(voice),
+            )
             cached_tr_path=cache/"voiceover_cache.json"
             cached_tr=None
+            cached_sha256=""
             if cached_tr_path.exists():
                 try:
                     cached=json.loads(cached_tr_path.read_text(encoding="utf-8"))
-                    if cached.get("sha256")==voice_sha256 and cached.get("transcript"):
+                    same_file=(
+                        cached.get("sha256") == cached.get("voiceover_sha256") and
+                        int(cached.get("size", -1)) == voice_size and
+                        int(cached.get("mtime_ns", -1)) == voice_mtime_ns
+                    )
+                    if cached.get("transcript") and (
+                        cached.get("sha256") == cached.get("voiceover_sha256") or
+                        same_file
+                    ):
                         cached_tr=cached["transcript"]
+                        cached_sha256=str(cached.get("sha256") or "")
                 except Exception:
                     cached_tr=None
 
@@ -179,9 +194,44 @@ class JobStore:
                     )
                 tr=transcribe(str(voice), progress=transcription_progress)
                 tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
+                # Hash only after transcription so a large WAV never blocks the
+                # first useful stage. This pass is still streamed and does not load the
+                # audio into RAM.
+                self.update(
+                    jid,
+                    status="processing",
+                    stage="transcription",
+                    progress=19,
+                    message=f"🎙️ Finalizing voiceover cache identity · {voice.name}",
+                    current_file=voice.name,
+                )
+                digest=hashlib.sha256()
+                with voice.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                voice_sha256=digest.hexdigest()
+                self.update(
+                    jid,
+                    status="processing",
+                    stage="transcription",
+                    progress=19,
+                    message=f"🎙️ Voiceover cache identity ready · SHA256 {voice_sha256[:12]}…",
+                    current_file=voice.name,
+                    voiceover_sha256=voice_sha256,
+                )
                 from .cache import atomic_json
-                atomic_json(cached_tr_path,{"version":1,"sha256":voice_sha256,"transcript":tr})
-                self.update(jid,status="processing",stage="transcription",progress=18,
+                atomic_json(
+                    cached_tr_path,
+                    {
+                        "version":2,
+                        "sha256":voice_sha256,
+                        "voiceover_sha256":voice_sha256,
+                        "size":voice_size,
+                        "mtime_ns":voice_mtime_ns,
+                        "transcript":tr,
+                    },
+                )
+                self.update(jid,status="processing",stage="transcription",progress=20,
                             message=f"🎙️ Transcription complete · {voice.name}",current_file=voice.name)
             narr=sentence_segments(tr)
             self.update(jid,stage="transcription",progress=20,
