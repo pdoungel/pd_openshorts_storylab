@@ -39,10 +39,10 @@ class JobStore:
             if jid not in self.jobs: return
             self.jobs[jid].update(kw); self._save(self.jobs[jid])
 
-    def _find_previous_job(self,root):
+    def _find_previous_job(self,root,exclude=None):
         root=str(Path(root).resolve()); best=None
         for p in self.root.iterdir():
-            if not p.is_dir() or p.name=="library": continue
+            if not p.is_dir() or p.name=="library" or p.name==exclude: continue
             meta=p/"job.json"
             if not meta.exists(): continue
             try:
@@ -76,7 +76,7 @@ class JobStore:
         j=self.get(jid); work=self.root/jid
         root=j["footage_root"]; cache=cache_dir(self.root,root)
         try:
-            previous=self._find_previous_job(root)
+            previous=self._find_previous_job(root,jid)
             if previous: seed_from_job(cache,previous)
             work.mkdir(parents=True,exist_ok=True)
             voice=work / ("voiceover" + Path(j["voiceover"]).suffix)
