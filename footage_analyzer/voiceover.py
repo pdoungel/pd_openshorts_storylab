@@ -134,7 +134,7 @@ def _extract_word_annotations(interaction):
             text = str(getattr(value, "text", "") or "").strip()
             start = _parse_timestamp(getattr(value, "start_offset", None))
             end = _parse_timestamp(getattr(value, "end_offset", None))
-            if text and start is not None and end > start:
+            if text and start is not None and end is not None and end > start:
                 words.append({"word": text, "start": start, "end": end})
         for attr in ("annotations", "content", "steps", "output"):
             child = getattr(value, attr, None)
@@ -225,6 +225,8 @@ def _gemini_transcribe(path, progress, duration):
     fallback = os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.8-flash")
     client = genai.Client(api_key=key)
     uploaded_result = {"file": None, "error": None}
+    upload_timeout = max(60, int(os.getenv("FOOTAGE_GEMINI_UPLOAD_TIMEOUT", "1800")))
+    transcribe_timeout = max(60, int(os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_TIMEOUT", "1800")))
     upload_started = time.monotonic()
 
     progress(6, duration, f"☁️ Uploading voiceover to Gemini · {Path(path).name}")
@@ -240,6 +242,8 @@ def _gemini_transcribe(path, progress, duration):
     heartbeat = 0
     while thread.is_alive():
         elapsed = int(time.monotonic() - upload_started)
+        if elapsed >= upload_timeout:
+            raise TimeoutError(f"Gemini audio upload exceeded {upload_timeout}s. Retry is safe; the local voiceover is preserved.")
         progress(min(9, 6 + heartbeat % 4), duration,
                  f"☁️ Uploading voiceover to Gemini · {Path(path).name} · {elapsed}s")
         heartbeat += 1
@@ -285,6 +289,9 @@ def _gemini_transcribe(path, progress, duration):
         progress(min(18, 10 + heartbeat % 9), duration,
                  f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s")
         heartbeat += 1
+        elapsed = time.monotonic() - started
+        if elapsed >= transcribe_timeout:
+            raise TimeoutError(f"Gemini transcription exceeded {transcribe_timeout}s. Retry is safe; the saved voiceover is preserved.")
         thread.join(timeout=1.0)
 
     if "error" not in error:
@@ -332,6 +339,9 @@ def _gemini_transcribe(path, progress, duration):
             progress(min(19, 10 + heartbeat % 10), duration,
                      f"☁️ Gemini fallback transcription · {Path(path).name} · {elapsed}s")
             heartbeat += 1
+            elapsed = time.monotonic() - started
+            if elapsed >= transcribe_timeout:
+                raise TimeoutError(f"Gemini fallback transcription exceeded {transcribe_timeout}s.")
             thread.join(timeout=1.0)
 
         if "error" not in error:
@@ -366,14 +376,17 @@ def transcribe(path, progress=None):
     # including timestamps, without downloading a Whisper model into Docker.
     if os.getenv("FOOTAGE_TRANSCRIBER","gemini").lower()=="gemini":
         try:
+            report(6, f"🎙️ Starting Gemini transcription · {Path(path).name}")
             return _gemini_transcribe(path, emit, duration)
         except Exception as exc:
             if os.getenv("FOOTAGE_GEMINI_LOCAL_FALLBACK", "1").lower() not in {"1", "true", "yes"}:
                 raise
             report(10, f"☁️ Gemini transcription unavailable · local Whisper fallback · {type(exc).__name__}")
     
-    model=_load_model(model_name,device,compute_type,progress)
-    report(10,f"🎙️ Starting transcription · {Path(path).name}")
+    model=_load_model(model_name,device,compute_type,emit)
+    report(10,f"🎙️ Starting local transcription · {Path(path).name}")
+    transcribe_timeout = max(60, int(os.getenv("FOOTAGE_WHISPER_TIMEOUT", "7200")))
+    started=time.monotonic()
     segments,info=model.transcribe(
         str(Path(path).expanduser().resolve()),
         word_timestamps=True,
@@ -384,6 +397,8 @@ def transcribe(path, progress=None):
     duration=float(getattr(info,"duration",0) or duration or 0)
     out=[]; text=[]; last_report=0.0
     for s in segments:
+        if time.monotonic() - started >= transcribe_timeout:
+            raise TimeoutError(f"Local Whisper transcription exceeded {transcribe_timeout}s.")
         now=time.monotonic(); end=float(s.end)
         pct=int(min(100,max(0,(end/duration*100) if duration else 10)))
         if progress and (now-last_report>=0.25 or pct>=100):
