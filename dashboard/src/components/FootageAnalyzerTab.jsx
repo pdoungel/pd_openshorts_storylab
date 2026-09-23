@@ -212,82 +212,121 @@ export default function FootageAnalyzerTab() {
 
             <div className="block">
               <span className="readout block mb-2">footage folder</span>
-              <label className="btn-quiet inline-flex cursor-pointer items-center gap-2">
+              <button
+                type="button"
+                className="btn-quiet inline-flex items-center gap-2"
+                disabled={resolvingFolder}
+                onClick={async () => {
+                  setError('');
+                  setFolderResolutionError('');
+                  setFootageRoot('');
+                  setFootage([]);
+                  setFootageFolderName('');
+                  setIndexInfo(null);
+
+                  // Use the real directory picker whenever the client supports
+                  // the File System Access API. This is a directory chooser,
+                  // not a file chooser, so the user cannot accidentally select
+                  // individual videos instead of the footage folder.
+                  if (typeof window.showDirectoryPicker !== 'function') {
+                    setError('This OpenShorts client does not provide a directory picker. Please use the latest desktop build.');
+                    return;
+                  }
+
+                  setResolvingFolder(true);
+                  try {
+                    const handle = await window.showDirectoryPicker({
+                      id: 'openshorts-footage',
+                      mode: 'read'
+                    });
+
+                    const files = [];
+                    const walk = async (dir, prefix = '') => {
+                      for await (const entry of dir.values()) {
+                        if (entry.name.startsWith('.')) continue;
+                        if (entry.kind === 'directory') {
+                          await walk(entry, prefix ? prefix + '/' + entry.name : entry.name);
+                        } else if (entry.kind === 'file') {
+                          const file = await entry.getFile();
+                          if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|m4v|webm|avi|mts|m2ts|ts)$/i.test(file.name)) {
+                            try {
+                              Object.defineProperty(file, 'webkitRelativePath', {
+                                configurable: true,
+                                value: handle.name + '/' + (prefix ? prefix + '/' : '') + file.name
+                              });
+                            } catch (_) {}
+                            files.push(file);
+                          }
+                        }
+                      }
+                    };
+
+                    await walk(handle);
+
+                    if (!files.length) {
+                      throw new Error('The selected folder contains no supported video files.');
+                    }
+
+                    setFootage(files);
+                    setFootageFolderName(handle.name);
+
+                    // The browser deliberately does not expose the absolute
+                    // native path from a FileSystemDirectoryHandle. Send the
+                    // folder name plus several real file fingerprints to the
+                    // analyzer, which resolves the mounted /Users or /Volumes
+                    // directory without uploading the footage.
+                    const resolveData = await new Promise((resolve, reject) => {
+                      const xhr = new XMLHttpRequest();
+                      xhr.open('POST', ANALYZER_URL + '/api/footage-analyzer/resolve-folder', true);
+                      xhr.setRequestHeader('Content-Type', 'application/json');
+                      xhr.timeout = 20000;
+                      xhr.onload = () => {
+                        let body = {};
+                        try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
+                        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+                        else {
+                          const detail = typeof body.detail === 'string'
+                            ? body.detail
+                            : body.detail?.message || 'Could not resolve the selected footage folder.';
+                          reject(new Error(detail));
+                        }
+                      };
+                      xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer while resolving the folder.'));
+                      xhr.ontimeout = () => reject(new Error('Timed out while resolving the selected footage folder.'));
+                      xhr.onabort = () => reject(new Error('Folder resolution was aborted.'));
+                      xhr.send(JSON.stringify({
+                        folder_name: handle.name,
+                        samples: files.slice(0, 20).map(file => ({
+                          name: file.name,
+                          relative_path: file.webkitRelativePath || '',
+                          size: file.size
+                        }))
+                      }));
+                    });
+
+                    if (!resolveData.path) {
+                      throw new Error('Footage Analyzer resolved the selection but returned no folder path.');
+                    }
+
+                    setFootageRoot(resolveData.path);
+                    setFootageFolderName(resolveData.folder_name || handle.name);
+                    setFolderResolutionError('');
+                  } catch (err) {
+                    if (err?.name === 'AbortError') return;
+                    const message = err?.message || 'Could not select the footage folder.';
+                    setFolderResolutionError(message);
+                    setError(message);
+                  } finally {
+                    if (mountedRef.current) setResolvingFolder(false);
+                  }
+                }}
+              >
                 <FolderOpen size={14} />
                 {resolvingFolder ? ' locating folder…' : ' choose footage folder'}
-                <input type="file" multiple webkitdirectory={true} directory={true} accept="video/*" className="hidden"
-                  onChange={async e => {
-                    const files = Array.from(e.target.files || []);
-                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError(''); setIndexInfo(null);
-                    if (!files.length) return;
-                    const first = files[0];
-                    // Browser directory inputs are inconsistent in desktop
-                    // webviews: webkitRelativePath and File.path may both be
-                    // absent. The backend can resolve the folder from file
-                    // names/sizes, so never reject the selection just because
-                    // browser path metadata is missing.
-                    const relative = first.webkitRelativePath || '';
-                    const folderName = relative.split('/')[0] || '';
-                    setFootageFolderName(folderName || 'Selected footage folder');
-                    const nativePath = first.path;
-                    const relativePath = relative.replace(/^\/+|\/+$/g, '');
-                    if (nativePath && (nativePath.startsWith('/Users/') || nativePath.startsWith('/Volumes/'))) {
-                      const rootPath = relativePath && nativePath.endsWith(relativePath)
-                        ? nativePath.slice(0, nativePath.length - relativePath.length).replace(/\/$/, '')
-                        : nativePath.slice(0, nativePath.lastIndexOf('/'));
-                      setFootageRoot(rootPath);
-                      setResolvingFolder(false);
-                      return;
-                    }
-                    setResolvingFolder(true);
-                    try {
-                      // Use XHR for localhost requests in desktop/webview clients.
-                      const resolveData = await new Promise((resolve, reject) => {
-                        const xhr = new XMLHttpRequest();
-                        xhr.open('POST', ANALYZER_URL + '/api/footage-analyzer/resolve-folder', true);
-                        xhr.setRequestHeader('Content-Type', 'application/json');
-                        xhr.timeout = 30000;
-                        xhr.onload = () => {
-                          let body = {};
-                          try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
-                          if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-                          else {
-                            const detail = typeof body.detail === 'string' ? body.detail : body.detail?.message || 'Could not locate the selected folder (HTTP ' + xhr.status + ')';
-                            reject(new Error(detail));
-                          }
-                        };
-                        xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer while locating the folder.'));
-                        xhr.ontimeout = () => reject(new Error('Timed out while locating the footage folder.'));
-                        xhr.onabort = () => reject(new Error('Folder resolution request was aborted.'));
-                        xhr.send(JSON.stringify({
-                          folder_name: folderName,
-                          samples: files.slice(0, 20).map(f => ({
-                            name: f.name,
-                            relative_path: f.webkitRelativePath || '',
-                            size: f.size
-                          }))
-                        }));
-                      });
-                      if (!resolveData.path) throw new Error('Analyzer located the folder request but returned no filesystem path.');
-
-                      // This was the critical missing state update: the resolver
-                      // succeeded, but the UI never stored the returned path, so
-                      // Analyze remained disabled and the folder appeared to fail.
-                      setFootageRoot(resolveData.path);
-                      setFootageFolderName(resolveData.folder_name || folderName);
-                      setFolderResolutionError('');
-                    } catch (err) {
-                      const message = err.message || 'Could not locate the selected folder';
-                      const browserHint = /load failed|failed to fetch|networkerror|fetch/i.test(message)
-                        ? ' Analyzer service is not reachable from this app. Restart the footage-analyzer container and try again.'
-                        : '';
-                      setFolderResolutionError(message + browserHint);
-                      setError(message + browserHint);
-                    } finally { setResolvingFolder(false); }
-                  }}
-                />
-              </label>
-              <p className="text-[11px] text-muted mt-2">Choose the folder in Finder. The folder itself is not uploaded; the analyzer reads it from the mounted Mac filesystem.</p>
+              </button>
+              <p className="text-[11px] text-muted mt-2">
+                Select the folder itself in Finder. Individual video files are not required.
+              </p>
             </div>
 
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
