@@ -82,7 +82,7 @@ def plan(narrations, instruction=""):
         from google import genai
 
         response = genai.Client(api_key=key).models.generate_content(
-            model=os.getenv("FOOTAGE_PLANNER_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("FOOTAGE_PLANNER_MODEL", "gemini-3.6-flash"),
             contents=prompt,
         )
         data = _json(getattr(response, "text", ""))
