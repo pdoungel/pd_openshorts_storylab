@@ -110,10 +110,9 @@ class JobStore:
         root=j["footage_root"]; cache=cache_dir(self.root,root)
         try:
             self.update(jid,status="processing",stage="starting",progress=1,message="Analyzer worker started…",current_file="")
-            previous=self._find_previous_job(root,jid)
-            if previous:
-                self.update(jid,stage="resuming",progress=2,message="Resuming persistent index…",current_file="")
-                seed_from_job(cache,previous)
+            # Do not enter the resume/seed path before transcription. Older jobs
+            # could spend a long time copying large visual indexes here, leaving
+            # the UI at 2% and making it look as if voiceover processing never began.
             work.mkdir(parents=True,exist_ok=True)
             # Keep the exact uploaded filename inside the job directory so the
             # UI and persisted job state can prove which file is being processed.
@@ -239,6 +238,25 @@ class JobStore:
                         current_file=voice.name,transcript_segment_count=len(narr),
                         voiceover_duration=float(tr.get("duration",0) or 0))
             if not narr: raise RuntimeError("No speech segments were detected in the voiceover.")
+
+            # Resume only when the persistent library cache is already present.
+            # Legacy job seeding is deliberately deferred until after the
+            # voiceover stage, so the user always sees real transcription
+            # progress first.
+            previous=self._find_previous_job(root,jid)
+            if previous:
+                cache.mkdir(parents=True,exist_ok=True)
+                missing=[name for name in ("footage_index.json","visual_index.json")
+                         if not (cache/name).exists() and (previous/name).exists()]
+                if missing:
+                    self.update(
+                        jid,
+                        stage="resuming",
+                        progress=20,
+                        message=f"Resuming saved footage index · {', '.join(missing)}",
+                        current_file="",
+                    )
+                    seed_from_job(cache,previous)
 
             self.update(jid,stage="indexing",progress=20,message="Resuming persistent footage index…")
             idx=cache/"footage_index.json"
