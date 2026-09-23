@@ -53,55 +53,174 @@ def clear_index(root: str):
 
 @app.post("/api/footage-analyzer/resolve-folder")
 async def resolve_folder(payload: dict):
-    folder_name=str(payload.get("folder_name") or "").strip()
+    """Resolve a browser-selected directory without depending on File.path.
+
+    Chromium/WebKit directory inputs are allowed to omit a native filesystem
+    path and, in some desktop clients, even omit webkitRelativePath.  The
+    resolver therefore accepts file samples (name + size + relative path)
+    and identifies the real mounted directory from the Mac filesystem.
+    """
+    raw_name=str(payload.get("folder_name") or "").strip()
     samples=payload.get("samples") or []
-    if not folder_name or folder_name in {".",".."} or "/" in folder_name or "\\" in folder_name:
-        raise HTTPException(400,"Invalid footage folder name.")
-    # macOS source paths are mounted at their original locations so a path
-    # selected/resolved by the UI can be passed directly to the analyzer.
-    search_roots=[Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
-    candidates=[]; roots_seen=[]
-    def onerror(_error): return None
-    # Browser directory inputs do not expose a native path in standard Chromium/WebKit.
-    # Resolve the selected folder against the Mac filesystem mounted into Docker.
-    # Allow normal nested project/media folders instead of silently failing at depth 5.
+    folder_name=raw_name if raw_name and raw_name not in {".",".."} and "/" not in raw_name and "\\" not in raw_name else ""
+
+    if not samples:
+        raise HTTPException(400,"No footage files were supplied by the folder picker.")
+
+    search_roots=[Path("/Users"),Path("/Volumes")]
+    skipped={".git","node_modules","__pycache__",".cache",".Trash"}
+    roots_seen=[str(p) for p in search_roots if p.exists()]
+
+    # Normalise the browser sample list. Name/size are available even when
+    # webkitRelativePath is not.
+    clean=[]
+    for item in samples[:20]:
+        name=Path(str(item.get("name") or "")).name
+        rel=str(item.get("relative_path") or "").replace("\\","/").strip("/")
+        size=item.get("size")
+        if not name:
+            continue
+        try:
+            size=int(size) if size is not None else None
+        except (TypeError, ValueError):
+            size=None
+        clean.append({"name":name,"relative_path":rel,"size":size})
+    if not clean:
+        raise HTTPException(400,"The folder picker returned no usable video file information.")
+
     max_depth=12
-    for root in search_roots:
-        if not root.exists(): continue
-        roots_seen.append(str(root)); root_depth=len(root.parts)
-        for base,dirs,_files in os.walk(root,topdown=True,onerror=onerror,followlinks=False):
-            base_path=Path(base); depth=len(base_path.parts)-root_depth
-            if depth>=max_depth: dirs[:]=[]; continue
-            dirs[:]=[d for d in dirs if d not in skipped and not d.startswith(".")]
-            if folder_name in dirs:
-                candidate=base_path/folder_name
-                if candidate.is_dir():
-                    candidates.append(candidate)
-                    if len(candidates)>=100: break
-        if len(candidates)>=100: break
-    def matches_samples(candidate):
-        if not samples: return True
-        checked=0
-        for item in samples[:20]:
-            relative=str(item.get("relative_path") or "").replace("\\","/").strip("/")
-            parts=Path(relative).parts
-            if len(parts)<2 or parts[0]!=folder_name: continue
-            target=candidate.joinpath(*parts[1:])
-            if not target.is_file(): return False
-            size=item.get("size")
-            if size is not None and target.stat().st_size!=int(size): return False
-            checked+=1
-        return checked>0
-    matches=[p for p in candidates if matches_samples(p)]
-    if len(matches)==1:
-        match=matches[0]; video_exts={".mp4",".mov",".mkv",".m4v",".webm",".avi"}
-        video_count=sum(1 for p in match.rglob("*") if p.is_file() and p.suffix.lower() in video_exts)
-        return {"path":str(match),"folder_name":folder_name,"video_count":video_count,"source":"mounted_mac_filesystem"}
-    if len(matches)>1:
-        raise HTTPException(409,{"message":"More than one matching folder was found. The analyzer needs an unambiguous folder.","candidates":[str(p) for p in matches[:10]]})
-    if not roots_seen:
-        raise HTTPException(503,"The analyzer container cannot see the Mac media roots. Check Docker Desktop File Sharing and that the footage drive is mounted.")
-    raise HTTPException(404,f"'{folder_name}' was selected in the browser, but the analyzer cannot find that folder under /Users or /Volumes. If it is on an external drive, make sure the drive is mounted and Docker Desktop can access /Volumes.")
+    candidates=[]
+
+    def onerror(_error):
+        return None
+
+    def file_matches(path, sample):
+        if path.name != sample["name"] or not path.is_file():
+            return False
+        return sample["size"] is None or path.stat().st_size == sample["size"]
+
+    # Fast path: when the browser supplied a folder name, locate that folder
+    # and verify several selected files against it.
+    if folder_name:
+        for root in search_roots:
+            if not root.exists():
+                continue
+            root_depth=len(root.parts)
+            for base,dirs,_files in os.walk(root,topdown=True,onerror=onerror,followlinks=False):
+                base_path=Path(base)
+                depth=len(base_path.parts)-root_depth
+                if depth>=max_depth:
+                    dirs[:]=[]
+                    continue
+                dirs[:]=[d for d in dirs if d not in skipped and not d.startswith(".")]
+                if folder_name in dirs:
+                    candidate=base_path/folder_name
+                    if candidate.is_dir():
+                        candidates.append(candidate)
+                if len(candidates)>=100:
+                    break
+            if len(candidates)>=100:
+                break
+
+        def matches_named_folder(candidate):
+            checked=0
+            for sample in clean:
+                rel=sample["relative_path"]
+                parts=Path(rel).parts
+                target=None
+                if len(parts)>=2 and parts[0]==folder_name:
+                    target=candidate.joinpath(*parts[1:])
+                else:
+                    target=candidate/sample["name"]
+                if target and file_matches(target,sample):
+                    checked+=1
+                elif len(parts)>=2:
+                    return False
+            return checked >= min(3,len(clean))
+
+        matches=[p for p in candidates if matches_named_folder(p)]
+        if len(matches)==1:
+            match=matches[0]
+        elif len(matches)>1:
+            raise HTTPException(409,{
+                "message":"More than one matching footage folder was found.",
+                "candidates":[str(p) for p in matches[:10]],
+            })
+        else:
+            match=None
+    else:
+        match=None
+
+    # Robust fallback: identify the folder from the actual selected files.
+    # This handles the exact case where the browser reports 14 files but no
+    # webkitRelativePath/folder name.
+    if match is None:
+        sample_subset=clean[:5]
+        found_parents={}
+        for root in search_roots:
+            if not root.exists():
+                continue
+            root_depth=len(root.parts)
+            for base,dirs,files in os.walk(root,topdown=True,onerror=onerror,followlinks=False):
+                base_path=Path(base)
+                depth=len(base_path.parts)-root_depth
+                if depth>=max_depth:
+                    dirs[:]=[]
+                    continue
+                dirs[:]=[d for d in dirs if d not in skipped and not d.startswith(".")]
+                file_set=set(files)
+                if not all(s["name"] in file_set for s in sample_subset):
+                    continue
+                score=0
+                for sample in sample_subset:
+                    target=base_path/sample["name"]
+                    if file_matches(target,sample):
+                        score+=1
+                if score==len(sample_subset):
+                    found_parents[str(base_path)]=score
+                    if len(found_parents)>20:
+                        break
+            if len(found_parents)>20:
+                break
+
+        matches=[Path(p) for p in found_parents]
+        if len(matches)==1:
+            match=matches[0]
+        elif len(matches)>1:
+            # Prefer a directory containing more of the selected sample files.
+            scored=[]
+            for candidate in matches:
+                score=sum(1 for s in clean if file_matches(candidate/s["name"],s))
+                scored.append((score,candidate))
+            scored.sort(key=lambda x:x[0],reverse=True)
+            best_score= scored[0][0] if scored else 0
+            best=[p for score,p in scored if score==best_score and score>=min(3,len(clean))]
+            if len(best)==1:
+                match=best[0]
+            else:
+                raise HTTPException(409,{
+                    "message":"More than one mounted folder matches the selected footage files.",
+                    "candidates":[str(p) for p in best[:10]],
+                })
+
+    if match is None:
+        if not roots_seen:
+            raise HTTPException(503,"The analyzer cannot see the Mac media roots. Check Docker Desktop File Sharing.")
+        raise HTTPException(
+            404,
+            "The browser supplied the footage files, but the analyzer could not resolve their Mac folder. "
+            "The folder may be outside /Users or /Volumes, or Docker Desktop may not have access to that drive."
+        )
+
+    video_exts={".mp4",".mov",".mkv",".m4v",".webm",".avi",".mts",".m2ts",".ts"}
+    video_count=sum(1 for p in match.rglob("*") if p.is_file() and p.suffix.lower() in video_exts)
+    return {
+        "path":str(match),
+        "folder_name":match.name,
+        "video_count":video_count,
+        "source":"mounted_mac_filesystem",
+        "matched_samples":len(clean),
+    }
 
 @app.get("/api/footage-analyzer/jobs/{job_id}")
 def job_status(job_id:str):
