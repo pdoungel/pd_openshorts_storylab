@@ -60,7 +60,10 @@ async def resolve_folder(payload: dict):
     search_roots=[Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
     candidates=[]; roots_seen=[]
     def onerror(_error): return None
-    max_depth=5
+    # Browser directory inputs do not expose a native path in standard Chromium/WebKit.
+    # Resolve the selected folder against the Mac filesystem mounted into Docker.
+    # Allow normal nested project/media folders instead of silently failing at depth 5.
+    max_depth=12
     for root in search_roots:
         if not root.exists(): continue
         roots_seen.append(str(root)); root_depth=len(root.parts)
