@@ -44,3 +44,37 @@ def test_word_annotation_with_missing_end_is_ignored():
     }
     words = _extract_word_annotations(interaction)
     assert words == [{"word": "valid", "start": 1.0, "end": 1.5}]
+
+
+def test_extract_word_annotations_walks_sdk_style_objects():
+    from footage_analyzer.voiceover import _extract_word_annotations
+
+    class Word:
+        type = "word_info"
+        text = "hello"
+        start_offset = "0.0s"
+        end_offset = "0.4s"
+
+    class Output:
+        def __init__(self):
+            self.annotations = [Word()]
+
+    class Interaction:
+        def __init__(self):
+            self.outputs = [Output()]
+
+    assert _extract_word_annotations(Interaction()) == [
+        {"word": "hello", "start": 0.0, "end": 0.4}
+    ]
+
+
+def test_interaction_status_accepts_enum_like_status():
+    from footage_analyzer.voiceover import _interaction_status
+
+    class Status:
+        value = "IN_PROGRESS"
+
+    class Interaction:
+        status = Status()
+
+    assert _interaction_status(Interaction()) == "in_progress"
