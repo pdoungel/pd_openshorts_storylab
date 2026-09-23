@@ -112,7 +112,7 @@ async def resolve_folder(payload: dict):
     if folder_name:
         candidates=[]
         for root in search_roots:
-            candidates.extend(run_find([str(root), "-type", "d", "-name", folder_name, "-prune"], timeout=8))
+            candidates.extend(run_find([str(root), "-type", "d", "-name", folder_name, "-print", "-prune"], timeout=8))
             if len(candidates)>25:
                 break
 
