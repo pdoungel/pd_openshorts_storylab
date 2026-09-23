@@ -137,7 +137,8 @@ class JobStore:
             self.update(jid,stage="indexing",progress=20,message="Resuming persistent footage index…")
             idx=cache/"footage_index.json"
             def index_progress(done,total,name,stats=None):
-                s=stats or {}
+                s=dict(stats or {})
+                s.update({"done":done,"total":total})
                 self.update(jid,progress=20+int(15*done/max(total,1)),
                             message=f"Indexing footage · {done}/{total} · reused {s.get('reused',0)} · {name}",
                             current_file=name,index_stats=s)
@@ -147,9 +148,10 @@ class JobStore:
             self.update(jid,stage="visual_analysis",progress=35,message=f"Resuming visual analysis · {len(shots)} shots")
             vis=cache/"visual_index.json"
             def visual_progress(done,total,current,stats=None):
-                s=stats or {}
+                s=dict(stats or {})
+                s.update({"done":done,"total":total})
                 self.update(jid,progress=35+int(35*done/max(total,1)),
-                            message=f"Visual analysis · {done}/{total} · reused {s.get('reused',0)} · {current}",
+                            message=f"Visual analysis · scene {done}/{total} · reused {s.get('reused',0)} · {current}",
                             current_file=current,visual_stats=s)
             data=enrich_index(str(idx),str(vis),progress=visual_progress)
 
