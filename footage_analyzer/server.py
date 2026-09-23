@@ -1,6 +1,6 @@
 """Standalone FastAPI service for Footage Analyzer."""
 from __future__ import annotations
-import os, shutil
+import os, shutil, time
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +23,16 @@ async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...)
     incoming=store.root/"incoming"; incoming.mkdir(parents=True,exist_ok=True)
     path=incoming/Path(voiceover.filename).name
     with path.open("wb") as f: shutil.copyfileobj(voiceover.file,f)
-    return store.create(str(path),str(root),instruction)
+    # Wait briefly for the worker to persist its first real stage so clients
+    # never remain stuck displaying the initial 0/1% starting state.
+    job=store.create(str(path),str(root),instruction)
+    deadline=time.time()+2.0
+    while time.time()<deadline:
+        current=store.get(job["id"]) or job
+        if int(current.get("update_seq",0))>0:
+            return current
+        time.sleep(0.05)
+    return store.get(job["id"]) or job
 
 @app.get("/api/footage-analyzer/index")
 def index_status(root: str):
