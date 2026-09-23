@@ -301,18 +301,77 @@ export default function FootageAnalyzerTab() {
             <div className="flex items-center gap-3">
               <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || resolvingFolder || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                {job?.status === 'processing' ? ' analyzing…' : ' analyze footage'}
+                {job?.status === 'processing' ? ' analyzing…' : job?.status === 'failed' ? ' retry analysis' : ' analyze footage'}
               </button>
               {job?.status === 'complete' && <span className="badge-ok"><CheckCircle2 size={12} /> complete</span>}
-              {job?.status === 'queued' && <span className="badge-brass">queued</span>}
+              {job?.status === 'failed' && <span className="badge-warn"><AlertTriangle size={12} /> resumable</span>}
             </div>
 
-            {job && job.status !== 'complete' && job.status !== 'failed' && (
-              <div className="border border-rule rounded-input p-3">
-                <div className="flex justify-between text-xs mb-2"><span className="text-muted">{job.message}</span><span className="readout">{job.progress || 0}%</span></div>
-                {job.current_file && <p className="text-[11px] text-ink2 truncate mb-2" title={job.current_file}>processing · {job.current_file}</p>}
-                <div className="h-1.5 bg-paper rounded-full overflow-hidden"><div className="h-full bg-accent transition-all" style={{width: `${job.progress || 0}%`}} /></div>
-                <p className="readout mt-2">{job.stage || 'queued'}</p>
+            {job && job.status !== 'complete' && (
+              <div className="border border-rule rounded-input p-4 bg-paper">
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="mt-0.5 shrink-0">
+                    {job.status === 'failed' ? <AlertTriangle size={19} className="text-brass" /> : <Loader2 size={19} className="text-brass animate-spin" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-ink2">
+                        {job.status === 'failed' ? 'Analysis stopped — saved progress is available' : (
+                          job.stage === 'transcription' ? '🎙️ Transcribing audio…' :
+                          job.stage === 'indexing' ? '🎬 Indexing / analyzing video files…' :
+                          job.stage === 'visual_analysis' ? '🧠 Analyzing video…' :
+                          job.stage === 'visual_plan' ? '🧭 Building visual plan…' :
+                          job.stage === 'matching' ? '🔗 Matching footage to narration…' :
+                          job.stage === 'resuming' ? '↻ Resuming saved analysis…' :
+                          'Starting Footage Analyzer…'
+                        )}
+                      </p>
+                      <span className="readout shrink-0">{job.progress || 0}%</span>
+                    </div>
+                    {job.current_file && (
+                      <p className="text-xs text-ink2 truncate mt-2" title={job.current_file}>
+                        {job.stage === 'transcription' ? 'audio · ' : 'video · '}{job.current_file}
+                      </p>
+                    )}
+                    {job.status === 'failed' && (
+                      <p className="text-[11px] text-muted mt-2 leading-relaxed">
+                        Completed files and successful visual analyses were saved to the persistent index. Retry to continue with the remaining work.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="h-1.5 bg-paper rounded-full overflow-hidden">
+                  <div className="h-full bg-accent transition-all" style={{width: `${job.progress || 0}%`}} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  {job.stage === 'transcription' ? (
+                    <div className="rounded-input border border-rule px-3 py-2">
+                      <p className="readout">VOICEOVER</p>
+                      <p className="text-xs text-ink2 truncate mt-1">{job.current_file || 'processing audio…'}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-input border border-rule px-3 py-2">
+                      <p className="readout">FOOTAGE</p>
+                      <p className="text-xs text-ink2 truncate mt-1">{job.current_file || 'preparing video…'}</p>
+                    </div>
+                  )}
+                  <div className="rounded-input border border-rule px-3 py-2">
+                    <p className="readout">PROGRESS</p>
+                    <p className="text-xs text-ink2 mt-1">
+                      {job.stage === 'visual_analysis' && job.visual_stats
+                        ? `${job.visual_stats.reused || 0} reused · ${job.visual_stats.failed || 0} failed`
+                        : job.index_stats
+                          ? `${job.index_stats.reused || 0} reused · ${job.index_stats.failed || 0} failed`
+                          : job.status === 'failed' ? 'saved · retryable' : 'working…'}
+                    </p>
+                  </div>
+                </div>
+
+                {job.message && (
+                  <p className="text-[11px] text-muted mt-3 truncate" title={job.message}>{job.message}</p>
+                )}
               </div>
             )}
 
