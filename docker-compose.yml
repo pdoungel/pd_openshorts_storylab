@@ -34,8 +34,7 @@ services:
     volumes:
       - ./footage_analyzer:/app/footage_analyzer
       - ./workspace:/app/workspace
-      - /Users:/Users:ro
-      - /Volumes:/Volumes:ro
+      - ${HOST_MEDIA_ROOT:-/Users}:/host_media:ro
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - FOOTAGE_ANALYZER_WORKDIR=/app/workspace/footage_analyzer
