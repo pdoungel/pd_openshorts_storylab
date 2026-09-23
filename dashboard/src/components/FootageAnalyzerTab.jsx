@@ -310,6 +310,7 @@ export default function FootageAnalyzerTab() {
             {job && job.status !== 'complete' && job.status !== 'failed' && (
               <div className="border border-rule rounded-input p-3">
                 <div className="flex justify-between text-xs mb-2"><span className="text-muted">{job.message}</span><span className="readout">{job.progress || 0}%</span></div>
+                {job.current_file && <p className="text-[11px] text-ink2 truncate mb-2" title={job.current_file}>processing · {job.current_file}</p>}
                 <div className="h-1.5 bg-paper rounded-full overflow-hidden"><div className="h-full bg-accent transition-all" style={{width: `${job.progress || 0}%`}} /></div>
                 <p className="readout mt-2">{job.stage || 'queued'}</p>
               </div>
