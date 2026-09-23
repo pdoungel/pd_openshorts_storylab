@@ -361,9 +361,9 @@ export default function FootageAnalyzerTab() {
                     <p className="readout">PROGRESS</p>
                     <p className="text-xs text-ink2 mt-1">
                       {job.stage === 'visual_analysis' && job.visual_stats
-                        ? `${job.visual_stats.reused || 0} reused · ${job.visual_stats.failed || 0} failed`
+                        ? `scene ${job.visual_stats.done || 0}/${job.visual_stats.total || 0} · ${job.visual_stats.reused || 0} reused`
                         : job.index_stats
-                          ? `${job.index_stats.reused || 0} reused · ${job.index_stats.failed || 0} failed`
+                          ? `file ${job.index_stats.done || 0}/${job.index_stats.total || 0} · ${job.index_stats.reused || 0} reused`
                           : job.status === 'failed' ? 'saved · retryable' : 'working…'}
                     </p>
                   </div>
