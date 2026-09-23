@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { FolderOpen, Mic2, Film, Sparkles, Play, CheckCircle2, AlertTriangle, ChevronDown, Search, Download, Loader2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { FolderOpen, Mic2, Film, Sparkles, Play, CheckCircle2, AlertTriangle, ChevronDown, Search, Download, Loader2, Trash2, RefreshCw, HardDrive } from 'lucide-react';
 
 const ANALYZER_URL = import.meta.env.VITE_FOOTAGE_ANALYZER_URL || 'http://localhost:8010';
 
@@ -30,39 +30,73 @@ export default function FootageAnalyzerTab() {
   const [timeline, setTimeline] = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [error, setError] = useState('');
+  const [indexInfo, setIndexInfo] = useState(null);
+  const [indexBusy, setIndexBusy] = useState(false);
   const pollRef = useRef(null);
+  const pollAbortRef = useRef(null);
+  const mountedRef = useRef(true);
+  const pollingRef = useRef(false);
 
   const footageCount = footage.length;
   const totalSize = useMemo(() => footage.reduce((n, f) => n + (f.size || 0), 0), [footage]);
 
+  useEffect(() => () => {
+    mountedRef.current = false;
+    if (pollRef.current) window.clearTimeout(pollRef.current);
+    if (pollAbortRef.current) pollAbortRef.current.abort();
+  }, []);
+
+  const refreshIndex = async (root = footageRoot) => {
+    if (!root) return;
+    try {
+      const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/index?root=\${encodeURIComponent(root)}\`, { cache: 'no-store' });
+      if (res.ok && mountedRef.current) setIndexInfo(await res.json());
+    } catch (_) {}
+  };
+
+  useEffect(() => { if (footageRoot) refreshIndex(footageRoot); }, [footageRoot]);
+
   const stopPolling = () => {
-    if (pollRef.current) window.clearInterval(pollRef.current);
+    if (pollRef.current) window.clearTimeout(pollRef.current);
     pollRef.current = null;
+    if (pollAbortRef.current) pollAbortRef.current.abort();
+    pollAbortRef.current = null;
+    pollingRef.current = false;
   };
 
   const pollJob = (id) => {
     stopPolling();
     const tick = async () => {
+      if (!mountedRef.current || pollingRef.current) return;
+      pollingRef.current = true;
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
       try {
-        const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${id}`);
+        const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/jobs/\${id}\`, { signal: controller.signal, cache: 'no-store' });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
+        if (!mountedRef.current) return;
         setJob(data);
+        if (data.index_stats) setIndexInfo(data.index_stats);
         if (data.status === 'complete') {
-          const edl = data.result?.clips || [];
-          setTimeline(edl);
+          setTimeline(data.result?.clips || []);
           stopPolling();
+          refreshIndex(data.footage_root || footageRoot);
         } else if (data.status === 'failed') {
           setError(data.error?.message || data.message || 'Analysis failed');
           stopPolling();
         }
       } catch (e) {
-        setError(e.message || 'Could not reach Footage Analyzer');
-        stopPolling();
+        if (e?.name !== 'AbortError' && mountedRef.current) setError(e.message || 'Could not reach Footage Analyzer');
+      } finally {
+        pollingRef.current = false;
+        if (pollAbortRef.current === controller) pollAbortRef.current = null;
+        if (mountedRef.current && !pollRef.current && !pollingRef.current) {
+          pollRef.current = window.setTimeout(() => { pollRef.current = null; tick(); }, 1500);
+        }
       }
     };
     tick();
-    pollRef.current = window.setInterval(tick, 1500);
   };
 
   const startAnalysis = async () => {
@@ -104,6 +138,20 @@ export default function FootageAnalyzerTab() {
       setError(e.message || 'Could not start analysis');
       setJob(null);
     }
+  };
+
+  const clearIndex = async () => {
+    if (!footageRoot) return;
+    if (!window.confirm('Clear Footage Analyzer index and cached visual analysis for this folder? Original video files will NOT be deleted.')) return;
+    setIndexBusy(true); setError('');
+    try {
+      const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/index?root=\${encodeURIComponent(footageRoot)}\`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Could not clear the index');
+      setIndexInfo(null); setTimeline([]); setJob(null);
+      setError(\`Index cleared · freed \${data.cleared_size || '0 B'} · original footage was not touched.\`);
+    } catch (e) { setError(e.message || 'Could not clear the index'); }
+    finally { if (mountedRef.current) setIndexBusy(false); }
   };
 
   const loadDemo = () => {
@@ -157,7 +205,7 @@ export default function FootageAnalyzerTab() {
                 <input type="file" multiple webkitdirectory="" directory="" accept="video/*" className="hidden"
                   onChange={async e => {
                     const files = Array.from(e.target.files || []);
-                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError('');
+                    setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError(''); setIndexInfo(null);
                     if (!files.length) return;
                     const first = files[0];
                     const folderName = (first.webkitRelativePath || '').split('/')[0] || '';
@@ -216,6 +264,22 @@ export default function FootageAnalyzerTab() {
               </div>
             </div>
 
+            {footageRoot && (
+              <div className="border border-rule rounded-input p-3 bg-paper">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2"><HardDrive size={15} className="text-brass" /><span className="readout">PERSISTENT INDEX</span><button onClick={() => refreshIndex()} className="text-muted" title="Refresh"><RefreshCw size={13} /></button></div>
+                  <span className="text-xs text-muted">{indexInfo?.size || '0 B'}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                  <div><p className="text-sm text-ink2">{indexInfo?.files_indexed || 0}/{indexInfo?.files_total || 0}</p><p className="readout">files indexed</p></div>
+                  <div><p className="text-sm text-ink2">{indexInfo?.visual_shots_completed || 0}</p><p className="readout">visual analyses</p></div>
+                  <div><p className="text-sm text-ink2">{indexInfo?.files_failed || 0}</p><p className="readout">failed/retry</p></div>
+                </div>
+                <button onClick={clearIndex} disabled={indexBusy || job?.status === 'processing' || job?.status === 'queued'} className="btn-quiet text-xs mt-3"><Trash2 size={13} />{indexBusy ? ' clearing…' : ' clear index / free storage'}</button>
+                <p className="text-[10px] text-muted mt-2">Clears analyzer-generated index/cache only. Original video files are never deleted.</p>
+              </div>
+            )}
+
             <label className="block">
               <span className="readout block mb-2">optional editorial direction</span>
               <textarea className="input-field min-h-[92px] resize-y" placeholder="e.g. Prefer archival-looking footage and wide establishing shots when exact subjects are unavailable." value={instruction} onChange={e => setInstruction(e.target.value)} />
@@ -226,7 +290,7 @@ export default function FootageAnalyzerTab() {
                 <CheckCircle2 size={18} className="text-brass shrink-0" />
                 <div>
                   <p className="text-sm text-ink2">Ready to analyze</p>
-                  <p className="text-xs text-muted mt-1">Voiceover and footage folder have both been selected successfully.</p>
+                  <p className="text-xs text-muted mt-1">{indexInfo?.files_indexed ? `Resumable index: ${indexInfo.files_indexed} files already completed; unchanged files will be skipped.` : 'A persistent index will be created. Progress is saved after every file.'}</p>
                 </div>
               </div>
             )}
