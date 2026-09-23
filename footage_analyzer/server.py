@@ -1,15 +1,15 @@
 """Standalone FastAPI service for Footage Analyzer."""
 from __future__ import annotations
-import os, shutil, time
+import asyncio, os, shutil, time, uuid
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from .service import JobStore
 
-BUILD_ID="e1c4abb7d64dd366d164e78849a718cc6c84f6fb"
+BUILD_ID="footage-analyzer-mvp-2026-09-23"
 app=FastAPI(title="OpenShorts Footage Analyzer",version="2.0-footage-mvp")
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 store=JobStore()
 
 @app.get("/health")
@@ -26,8 +26,10 @@ async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...)
         raise HTTPException(400,"Footage folder is not accessible inside the analyzer container.")
     if not voiceover.filename: raise HTTPException(400,"Voiceover file is required.")
     incoming=store.root/"incoming"; incoming.mkdir(parents=True,exist_ok=True)
-    path=incoming/Path(voiceover.filename).name
-    with path.open("wb") as f: shutil.copyfileobj(voiceover.file,f)
+    safe_name=Path(voiceover.filename).name
+    path=incoming/f"{uuid.uuid4().hex}-{safe_name}"
+    with path.open("wb") as f:
+        shutil.copyfileobj(voiceover.file,f)
     # Wait briefly for the worker to persist its first real stage so clients
     # never remain stuck displaying the initial 0/1% starting state.
     job=store.create(str(path),str(root),instruction)
@@ -36,7 +38,7 @@ async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...)
         current=store.get(job["id"]) or job
         if int(current.get("update_seq",0))>0:
             return current
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
     return store.get(job["id"]) or job
 
 @app.get("/api/footage-analyzer/index")
@@ -198,9 +200,9 @@ async def resolve_folder(payload: dict):
     video_exts={".mp4",".mov",".mkv",".m4v",".webm",".avi",".mts",".m2ts",".ts"}
     video_count=0
     try:
-        for p in match.iterdir():
-            if p.is_file() and p.suffix.lower() in video_exts:
-                video_count+=1
+        for p in match.rglob("*"):
+            if p.is_file() and p.suffix.lower() in video_exts and not p.name.startswith("._"):
+                video_count += 1
     except OSError:
         pass
 
