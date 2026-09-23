@@ -32,6 +32,7 @@ export default function FootageAnalyzerTab() {
   const [error, setError] = useState('');
   const [indexInfo, setIndexInfo] = useState(null);
   const [indexBusy, setIndexBusy] = useState(false);
+  const folderInputRef = useRef(null);
   const pollRef = useRef(null);
   const pollAbortRef = useRef(null);
   const mountedRef = useRef(true);
@@ -153,6 +154,127 @@ export default function FootageAnalyzerTab() {
     }
   };
 
+  const resolveSelectedFolder = async (folderName, files) => {
+    if (!folderName || !files.length) throw new Error('Select a footage folder containing supported video files.');
+
+    const resolveData = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', ANALYZER_URL + '/api/footage-analyzer/resolve-folder', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.timeout = 20000;
+      xhr.onload = () => {
+        let body = {};
+        try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+        else {
+          const detail = typeof body.detail === 'string'
+            ? body.detail
+            : body.detail?.message || 'Could not resolve the selected footage folder.';
+          reject(new Error(detail));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer while resolving the folder.'));
+      xhr.ontimeout = () => reject(new Error('Timed out while resolving the selected footage folder.'));
+      xhr.onabort = () => reject(new Error('Folder resolution was aborted.'));
+      xhr.send(JSON.stringify({
+        folder_name: folderName,
+        samples: files.slice(0, 20).map(file => ({
+          name: file.name,
+          relative_path: file.webkitRelativePath || file.name,
+          size: file.size
+        }))
+      }));
+    });
+
+    if (!resolveData.path) throw new Error('Footage Analyzer resolved the selection but returned no folder path.');
+    setFootage(files);
+    setFootageFolderName(resolveData.folder_name || folderName);
+    setFootageRoot(resolveData.path);
+    setFolderResolutionError('');
+    setError('');
+    return resolveData;
+  };
+
+  const handleFolderFiles = async (fileList) => {
+    const all = Array.from(fileList || []);
+    const videos = all.filter(file =>
+      file?.type?.startsWith('video/') ||
+      /\.(mp4|mov|mkv|m4v|webm|avi|mts|m2ts|ts)$/i.test(file?.name || '')
+    );
+    if (!videos.length) throw new Error('The selected folder contains no supported video files.');
+
+    const firstRelative = videos[0].webkitRelativePath || '';
+    const folderName = firstRelative.split('/')[0] || '';
+    if (!folderName) {
+      throw new Error('OpenShorts received video files without their folder path. Use the folder selector rather than selecting individual files.');
+    }
+    await resolveSelectedFolder(folderName, videos);
+  };
+
+  const chooseFootageFolder = async () => {
+    if (resolvingFolder) return;
+    setError('');
+    setFolderResolutionError('');
+    setFootageRoot('');
+    setFootage([]);
+    setFootageFolderName('');
+    setIndexInfo(null);
+    setResolvingFolder(true);
+    try {
+      if (typeof window.showDirectoryPicker === 'function') {
+        const handle = await window.showDirectoryPicker({ id: 'openshorts-footage', mode: 'read' });
+        const files = [];
+        const walk = async (dir, prefix = '') => {
+          for await (const entry of dir.values()) {
+            if (entry.name.startsWith('.')) continue;
+            if (entry.kind === 'directory') {
+              await walk(entry, prefix ? prefix + '/' + entry.name : entry.name);
+            } else if (entry.kind === 'file') {
+              const file = await entry.getFile();
+              if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|m4v|webm|avi|mts|m2ts|ts)$/i.test(file.name)) {
+                try {
+                  Object.defineProperty(file, 'webkitRelativePath', {
+                    configurable: true,
+                    value: handle.name + '/' + (prefix ? prefix + '/' : '') + file.name
+                  });
+                } catch (_) {}
+                files.push(file);
+              }
+            }
+          }
+        };
+        await walk(handle);
+        await resolveSelectedFolder(handle.name, files);
+      } else {
+        // Fallback for Chromium/Electron builds without File System Access:
+        // webkitdirectory opens the OS directory chooser and returns its
+        // contents. The UI never asks the user to choose individual videos.
+        folderInputRef.current?.click();
+      }
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        const message = err?.message || 'Could not select the footage folder.';
+        setFolderResolutionError(message);
+        setError(message);
+      }
+    } finally {
+      if (typeof window.showDirectoryPicker === 'function' && mountedRef.current) setResolvingFolder(false);
+    }
+  };
+
+  const onFolderInputChange = async (event) => {
+    try {
+      await handleFolderFiles(event.target.files);
+    } catch (err) {
+      const message = err?.message || 'Could not select the footage folder.';
+      setFolderResolutionError(message);
+      setError(message);
+    } finally {
+      event.target.value = '';
+      if (mountedRef.current) setResolvingFolder(false);
+    }
+  };
+
   const clearIndex = async () => {
     if (!footageRoot) return;
     if (!window.confirm('Clear Footage Analyzer index and cached visual analysis for this folder? Original video files will NOT be deleted.')) return;
@@ -216,116 +338,23 @@ export default function FootageAnalyzerTab() {
                 type="button"
                 className="btn-quiet inline-flex items-center gap-2"
                 disabled={resolvingFolder}
-                onClick={async () => {
-                  setError('');
-                  setFolderResolutionError('');
-                  setFootageRoot('');
-                  setFootage([]);
-                  setFootageFolderName('');
-                  setIndexInfo(null);
-
-                  // Use the real directory picker whenever the client supports
-                  // the File System Access API. This is a directory chooser,
-                  // not a file chooser, so the user cannot accidentally select
-                  // individual videos instead of the footage folder.
-                  if (typeof window.showDirectoryPicker !== 'function') {
-                    setError('This OpenShorts client does not provide a directory picker. Please use the latest desktop build.');
-                    return;
-                  }
-
-                  setResolvingFolder(true);
-                  try {
-                    const handle = await window.showDirectoryPicker({
-                      id: 'openshorts-footage',
-                      mode: 'read'
-                    });
-
-                    const files = [];
-                    const walk = async (dir, prefix = '') => {
-                      for await (const entry of dir.values()) {
-                        if (entry.name.startsWith('.')) continue;
-                        if (entry.kind === 'directory') {
-                          await walk(entry, prefix ? prefix + '/' + entry.name : entry.name);
-                        } else if (entry.kind === 'file') {
-                          const file = await entry.getFile();
-                          if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|m4v|webm|avi|mts|m2ts|ts)$/i.test(file.name)) {
-                            try {
-                              Object.defineProperty(file, 'webkitRelativePath', {
-                                configurable: true,
-                                value: handle.name + '/' + (prefix ? prefix + '/' : '') + file.name
-                              });
-                            } catch (_) {}
-                            files.push(file);
-                          }
-                        }
-                      }
-                    };
-
-                    await walk(handle);
-
-                    if (!files.length) {
-                      throw new Error('The selected folder contains no supported video files.');
-                    }
-
-                    setFootage(files);
-                    setFootageFolderName(handle.name);
-
-                    // The browser deliberately does not expose the absolute
-                    // native path from a FileSystemDirectoryHandle. Send the
-                    // folder name plus several real file fingerprints to the
-                    // analyzer, which resolves the mounted /Users or /Volumes
-                    // directory without uploading the footage.
-                    const resolveData = await new Promise((resolve, reject) => {
-                      const xhr = new XMLHttpRequest();
-                      xhr.open('POST', ANALYZER_URL + '/api/footage-analyzer/resolve-folder', true);
-                      xhr.setRequestHeader('Content-Type', 'application/json');
-                      xhr.timeout = 20000;
-                      xhr.onload = () => {
-                        let body = {};
-                        try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
-                        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-                        else {
-                          const detail = typeof body.detail === 'string'
-                            ? body.detail
-                            : body.detail?.message || 'Could not resolve the selected footage folder.';
-                          reject(new Error(detail));
-                        }
-                      };
-                      xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer while resolving the folder.'));
-                      xhr.ontimeout = () => reject(new Error('Timed out while resolving the selected footage folder.'));
-                      xhr.onabort = () => reject(new Error('Folder resolution was aborted.'));
-                      xhr.send(JSON.stringify({
-                        folder_name: handle.name,
-                        samples: files.slice(0, 20).map(file => ({
-                          name: file.name,
-                          relative_path: file.webkitRelativePath || '',
-                          size: file.size
-                        }))
-                      }));
-                    });
-
-                    if (!resolveData.path) {
-                      throw new Error('Footage Analyzer resolved the selection but returned no folder path.');
-                    }
-
-                    setFootageRoot(resolveData.path);
-                    setFootageFolderName(resolveData.folder_name || handle.name);
-                    setFolderResolutionError('');
-                  } catch (err) {
-                    if (err?.name === 'AbortError') return;
-                    const message = err?.message || 'Could not select the footage folder.';
-                    setFolderResolutionError(message);
-                    setError(message);
-                  } finally {
-                    if (mountedRef.current) setResolvingFolder(false);
-                  }
-                }}
+                onClick={chooseFootageFolder}
               >
                 <FolderOpen size={14} />
                 {resolvingFolder ? ' locating folder…' : ' choose footage folder'}
               </button>
+              <input
+                ref={folderInputRef}
+                type="file"
+                hidden
+                multiple
+                webkitdirectory=""
+                directory=""
+                onChange={onFolderInputChange}
+                aria-label="Choose footage folder"
+              />
               <p className="text-[11px] text-muted mt-2">
-                Select the folder itself in Finder. Individual video files are not required.
+                Select one footage folder. OpenShorts recursively discovers supported videos; individual video selection is not required.
               </p>
             </div>
 
