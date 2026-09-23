@@ -386,6 +386,12 @@ def _create_gemini_interaction(client, uploaded, model_name):
         )
 
 
+def _interaction_status(interaction: Any) -> str:
+    status = getattr(interaction, "status", "")
+    value = getattr(status, "value", status)
+    return str(value or "").strip().lower().split(".")[-1]
+
+
 def _wait_for_gemini_interaction(
     client,
     interaction,
@@ -394,7 +400,7 @@ def _wait_for_gemini_interaction(
     filename: str,
 ):
     interaction_id = getattr(interaction, "id", None)
-    status = str(getattr(interaction, "status", "") or "").lower()
+    status = _interaction_status(interaction)
 
     if not interaction_id or status in {"completed", "failed", "cancelled"}:
         return interaction
