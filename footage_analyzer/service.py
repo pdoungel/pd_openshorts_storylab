@@ -133,7 +133,13 @@ class JobStore:
             import hashlib
             self.update(jid,status="processing",stage="transcription",progress=5,
                         message=f"🎙️ Preparing audio transcription · {voice.name}",current_file=voice.name)
-            voice_sha256=hashlib.sha256(voice.read_bytes()).hexdigest()
+                        # Stream the hash so a large WAV cannot block the worker at 5% while
+            # the entire file is loaded into RAM.
+            digest=hashlib.sha256()
+            with voice.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            voice_sha256=digest.hexdigest()
             self.update(jid,stage="transcription",progress=5,
                         message=f"🎙️ Processing uploaded file · {voice.name} · SHA256 {voice_sha256[:12]}…",
                         current_file=voice.name,voiceover_original_name=src.name,
