@@ -57,7 +57,9 @@ async def resolve_folder(payload: dict):
     samples=payload.get("samples") or []
     if not folder_name or folder_name in {".",".."} or "/" in folder_name or "\\" in folder_name:
         raise HTTPException(400,"Invalid footage folder name.")
-    # Compose mounts the selected host media parent at /host_media. Keep legacy mounts as fallback.\n    search_roots=[Path("/host_media"),Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
+    # macOS source paths are mounted at their original locations so a path
+    # selected/resolved by the UI can be passed directly to the analyzer.
+    search_roots=[Path("/Users"),Path("/Volumes")]; skipped={".git","node_modules","__pycache__",".cache",".Trash"}
     candidates=[]; roots_seen=[]
     def onerror(_error): return None
     # Browser directory inputs do not expose a native path in standard Chromium/WebKit.
@@ -98,7 +100,7 @@ async def resolve_folder(payload: dict):
     if len(matches)>1:
         raise HTTPException(409,{"message":"More than one matching folder was found. The analyzer needs an unambiguous folder.","candidates":[str(p) for p in matches[:10]]})
     if not roots_seen:
-        raise HTTPException(503,"The analyzer container cannot see /Users or /Volumes. Check Docker Desktop filesystem permissions and mounted drives.")
+        raise HTTPException(503,"The analyzer container cannot see the Mac media roots. Check Docker Desktop File Sharing and that the footage drive is mounted.")
     raise HTTPException(404,f"'{folder_name}' was selected in the browser, but the analyzer cannot find that folder under /Users or /Volumes. If it is on an external drive, make sure the drive is mounted and Docker Desktop can access /Volumes.")
 
 @app.get("/api/footage-analyzer/jobs/{job_id}")
