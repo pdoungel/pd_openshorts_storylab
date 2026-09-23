@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+import json
 
 
 def _probe_duration(path):
@@ -73,80 +74,126 @@ def _load_model(model_name, device, compute_type, progress):
     progress(10, 0, f"🎙️ Whisper model ready · {model_name}")
     return result["model"]
 
+def _parse_json(text):
+    text=(text or "").strip()
+    if text.startswith("```"):
+        text=text.replace("```json","",1).replace("```","").strip()
+    try: return json.loads(text)
+    except Exception:
+        left=text.find("{"); right=text.rfind("}")
+        if left>=0 and right>left: return json.loads(text[left:right+1])
+        left=text.find("["); right=text.rfind("]")
+        if left>=0 and right>left: return json.loads(text[left:right+1])
+        raise ValueError("Transcription service returned non-JSON output")
+
+def _parse_timestamp(value):
+    if isinstance(value,(int,float)): return float(value)
+    s=str(value or "").strip()
+    parts=s.split(":")
+    try:
+        if len(parts)==3: return int(parts[0])*3600+int(parts[1])*60+float(parts[2])
+        if len(parts)==2: return int(parts[0])*60+float(parts[1])
+        return float(s)
+    except Exception: return None
+
+def _gemini_transcribe(path, progress, duration):
+    from google import genai
+    from google.genai import types
+    key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key: raise RuntimeError("GEMINI_API_KEY is required for Gemini transcription.")
+    model_name=os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_MODEL","gemini-3.5-transcribe")
+    progress(6,duration,f"☁️ Uploading voiceover to Gemini Transcribe · {Path(path).name}")
+    client=genai.Client(api_key=key)
+    uploaded=client.files.upload(file=str(Path(path).resolve()))
+    progress(9,duration,f"☁️ Voiceover uploaded · Gemini is transcribing · {Path(path).name}")
+    config=types.GenerateContentConfig(
+        audio_transcription_config=types.AudioTranscriptionConfig(
+            word_timestamp=True,
+        )
+    )
+    prompt=(
+        "Transcribe this voiceover verbatim. Return ONLY valid JSON. "
+        "Use this exact shape: {\"language\":\"en\",\"segments\":[{\"start\":0.0,\"end\":2.5,\"text\":\"...\"}]}."
+        " Timestamps must be seconds from the beginning of the audio. "
+        "Create one segment for each natural spoken phrase/sentence. "
+        "Do not summarize, translate, rewrite, or invent words. Preserve the spoken language."
+    )
+    started=time.monotonic()
+    result={}
+    error={}
+    def call():
+        try:
+            response=client.models.generate_content(model=model_name,contents=[uploaded,prompt],config=config)
+            result["response"]=response
+        except Exception as exc: error["error"]=exc
+    thread=threading.Thread(target=call,daemon=True,name="gemini-transcription")
+    thread.start()
+    heartbeat=0
+    while thread.is_alive():
+        elapsed=int(time.monotonic()-started)
+        progress(min(19,10+heartbeat%10),duration,
+                 f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s")
+        heartbeat+=1
+        thread.join(timeout=1.0)
+    if "error" in error: raise error["error"]
+    response=result.get("response")
+    if response is None: raise RuntimeError("Gemini transcription returned no response.")
+    data=_parse_json(getattr(response,"text",""))
+    raw=data.get("segments",[]) if isinstance(data,dict) else data
+    if not isinstance(raw,list): raise ValueError("Gemini transcription JSON has no segments list.")
+    out=[]; full=[]
+    for item in raw:
+        text=str(item.get("text","")).strip() if isinstance(item,dict) else ""
+        start=_parse_timestamp(item.get("start")) if isinstance(item,dict) else None
+        end=_parse_timestamp(item.get("end")) if isinstance(item,dict) else None
+        if not text or start is None or end is None or end<=start: continue
+        out.append({"start":start,"end":end,"text":text,"words":[]})
+        full.append(text)
+    if not out: raise ValueError("Gemini returned no usable timestamped speech segments.")
+    progress(20,duration,f"☁️ Gemini transcription complete · {len(out)} segments")
+    return {"text":" ".join(full),"language":str(data.get("language","auto")) if isinstance(data,dict) else "auto","segments":out,"duration":duration}
+
 def transcribe(path, progress=None):
-    model_name = os.getenv("FOOTAGE_WHISPER_MODEL", "base")
-    device = os.getenv("FOOTAGE_WHISPER_DEVICE", "cpu")
-    compute_type = os.getenv("FOOTAGE_WHISPER_COMPUTE", "int8")
-    duration = _probe_duration(path)
+    model_name=os.getenv("FOOTAGE_WHISPER_MODEL","base")
+    device=os.getenv("FOOTAGE_WHISPER_DEVICE","cpu")
+    compute_type=os.getenv("FOOTAGE_WHISPER_COMPUTE","int8")
+    duration=_probe_duration(path)
+    def report(pct,message):
+        if progress: progress(pct,duration,message)
+    report(5,f"🎙️ Preparing audio · {Path(path).name}")
 
-    def report(pct, message):
-        if progress:
-            progress(pct, duration, message)
+    # Gemini is the reliable default for this desktop workflow: the same API key
+    # already used for visual analysis can transcribe the uploaded voiceover,
+    # including timestamps, without downloading a Whisper model into Docker.
+    if os.getenv("FOOTAGE_TRANSCRIBER","gemini").lower()=="gemini":
+        return _gemini_transcribe(path,progress,duration)
 
-    report(5, f"🎙️ Preparing audio · {Path(path).name}")
-    model = _load_model(model_name, device, compute_type, progress)
-
-    report(10, f"🎙️ Starting transcription · {Path(path).name}")
-    # faster-whisper returns a lazy segment generator. The real inference happens
-    # while iterating it, so progress must be emitted from inside this loop.
-    segments, info = model.transcribe(
+    model=_load_model(model_name,device,compute_type,progress)
+    report(10,f"🎙️ Starting transcription · {Path(path).name}")
+    segments,info=model.transcribe(
         str(Path(path).expanduser().resolve()),
         word_timestamps=True,
         vad_filter=True,
-        beam_size=int(os.getenv("FOOTAGE_WHISPER_BEAM_SIZE", "1")),
+        beam_size=int(os.getenv("FOOTAGE_WHISPER_BEAM_SIZE","1")),
         log_progress=False,
     )
-
-    duration = float(getattr(info, "duration", 0) or duration or 0)
-    out = []
-    text = []
-    last_report = 0.0
-
+    duration=float(getattr(info,"duration",0) or duration or 0)
+    out=[]; text=[]; last_report=0.0
     for s in segments:
-        now = time.monotonic()
-        end = float(s.end)
-        pct = int(min(100, max(0, (end / duration * 100) if duration else 10)))
-
-        # Report every segment, and make sure long gaps between speech segments
-        # still result in a useful visible update when the next segment arrives.
-        if progress and (now - last_report >= 0.25 or pct >= 100):
-            progress(
-                10 + int(10 * pct / 100),
-                duration,
-                f"🎙️ Transcribing audio · {format_seconds(end)} / {format_seconds(duration)}",
-            )
-            last_report = now
-
-        t = str(s.text).strip()
-        if not t:
-            continue
-
-        out.append(
-            {
-                "start": float(s.start),
-                "end": end,
-                "text": t,
-                "words": [
-                    {
-                        "word": w.word,
-                        "start": float(w.start),
-                        "end": float(w.end),
-                    }
-                    for w in (s.words or [])
-                ],
-            }
-        )
+        now=time.monotonic(); end=float(s.end)
+        pct=int(min(100,max(0,(end/duration*100) if duration else 10)))
+        if progress and (now-last_report>=0.25 or pct>=100):
+            progress(10+int(10*pct/100),duration,
+                     f"🎙️ Transcribing audio · {format_seconds(end)} / {format_seconds(duration)}")
+            last_report=now
+        t=str(s.text).strip()
+        if not t: continue
+        out.append({"start":float(s.start),"end":end,"text":t,"words":[
+            {"word":w.word,"start":float(w.start),"end":float(w.end)} for w in (s.words or [])
+        ]})
         text.append(t)
-
-    report(20, f"🎙️ Audio transcription complete · {Path(path).name}")
-    return {
-        "text": " ".join(text),
-        "language": getattr(info, "language", "en"),
-        "segments": out,
-        "duration": duration,
-    }
-
-
+    report(20,f"🎙️ Audio transcription complete · {Path(path).name}")
+    return {"text":" ".join(text),"language":getattr(info,"language","en"),"segments":out,"duration":duration}
 def format_seconds(value):
     value = max(0.0, float(value or 0))
     minutes = int(value // 60)
