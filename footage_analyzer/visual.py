@@ -1,6 +1,7 @@
 """Persistent sampled-frame visual enrichment."""
 from __future__ import annotations
 import json,os,subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 from PIL import Image
@@ -63,32 +64,53 @@ def enrich_index(index_path,output_path,progress=None,limit=None):
     if manifest_path.exists():
         try: manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception: manifest={}
-    shots=data.get("shots",[]); total=min(len(shots),limit) if limit else len(shots)
-    done=0; reused=0; failed=0
-    for shot in shots:
-        if limit is not None and done>=limit: break
+    shots=data.get("shots",[])
+    work=shots[:limit] if limit is not None else shots
+    total=len(work); done=0; reused=0; failed=0
+    pending=[]
+    for shot in work:
         sid=shot["id"]; existing=old.get(sid,{})
         if existing.get("description"):
-            shot.update(existing); reused+=1
+            shot.update(existing); reused+=1; done+=1
+            if progress:
+                progress(done,total,
+                         f"{Path(shot["video_path"]).name} · {shot["start"]:.1f}–{shot["end"]:.1f}s",
+                         {"reused":reused,"failed":failed})
         else:
-            manifest[sid]={"status":"processing","video_path":shot["video_path"]}
-            atomic_json(manifest_path,manifest)
-            try:
-                shot.update(describe_shot(shot["video_path"],shot["start"],shot["end"]))
-                manifest[sid]={"status":"complete","video_path":shot["video_path"]}
-            except Exception as exc:
-                manifest[sid]={"status":"failed","video_path":shot["video_path"],"error":str(exc)}
-                failed+=1
-                atomic_json(manifest_path,manifest)
+            manifest[sid]={"status":"processing","video_path":shot["video_path"],
+                           "start":shot["start"],"end":shot["end"]}
+            pending.append(shot)
+    atomic_json(manifest_path,manifest)
+
+    workers=max(1,min(int(os.getenv("FOOTAGE_VISUAL_WORKERS","3")),6))
+    def analyze(shot):
+        return describe_shot(shot["video_path"],shot["start"],shot["end"])
+
+    # Visual analysis is network-bound (frame extraction + Gemini request), so
+    # process a few independent shots concurrently. Results are persisted after
+    # every completed shot; a crash therefore never loses the completed work.
+    if pending:
+        with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="visual-shot") as pool:
+            futures={pool.submit(analyze,shot):shot for shot in pending}
+            for future in as_completed(futures):
+                shot=futures[future]; sid=shot["id"]
+                try:
+                    shot.update(future.result())
+                    manifest[sid]={"status":"complete","video_path":shot["video_path"],
+                                   "start":shot["start"],"end":shot["end"]}
+                except Exception as exc:
+                    failed+=1
+                    manifest[sid]={"status":"failed","video_path":shot["video_path"],
+                                   "start":shot["start"],"end":shot["end"],"error":str(exc)}
                 done+=1
-                if progress: progress(done,total,Path(shot["video_path"]).name,{"reused":reused,"failed":failed})
-                continue
-            atomic_json(manifest_path,manifest)
-        done+=1
-        data["shots"]=shots
-        data["version"]=4
-        atomic_json(output,data)
-        if progress: progress(done,total,Path(shot["video_path"]).name,{"reused":reused,"failed":failed})
+                atomic_json(manifest_path,manifest)
+                data["shots"]=shots; data["version"]=4
+                atomic_json(output,data)
+                if progress:
+                    progress(done,total,
+                             f"{Path(shot["video_path"]).name} · {shot["start"]:.1f}–{shot["end"]:.1f}s",
+                             {"reused":reused,"failed":failed})
+
     by_id={s["id"]:s for s in data.get("shots",[])}
     for sid,s in old.items():
         if s.get("description"): by_id.setdefault(sid,s)
