@@ -258,7 +258,13 @@ class JobStore:
                     )
                     seed_from_job(cache,previous)
 
-            self.update(jid,stage="indexing",progress=20,message="Resuming persistent footage index…")
+            has_persistent_index = (cache / "footage_index.json").exists()
+            self.update(
+                jid,
+                stage="indexing",
+                progress=20,
+                message="Resuming persistent footage index…" if has_persistent_index else "Indexing footage library…",
+            )
             idx=cache/"footage_index.json"
             def index_progress(done,total,name,stats=None):
                 s=dict(stats or {})
