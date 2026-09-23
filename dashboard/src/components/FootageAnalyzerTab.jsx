@@ -57,7 +57,7 @@ export default function FootageAnalyzerTab() {
   useEffect(() => { if (footageRoot) refreshIndex(footageRoot); }, [footageRoot]);
 
   const stopPolling = () => {
-    if (pollRef.current) window.clearTimeout(pollRef.current);
+    if (pollRef.current) window.clearInterval(pollRef.current);
     pollRef.current = null;
     if (pollAbortRef.current) pollAbortRef.current.abort();
     pollAbortRef.current = null;
@@ -66,40 +66,49 @@ export default function FootageAnalyzerTab() {
 
   const pollJob = (id) => {
     stopPolling();
+
+    // Keep polling deliberately simple and reliable. The analyzer writes every
+    // stage transition atomically to job.json, so the UI can safely ask for
+    // the latest state every 750ms while long transcription/Gemini operations
+    // are running.
     const tick = async () => {
       if (!mountedRef.current || pollingRef.current) return;
       pollingRef.current = true;
       const controller = new AbortController();
-      let terminal = false;
       pollAbortRef.current = controller;
       try {
-        const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${id}`, { signal: controller.signal, cache: 'no-store' });
+        const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${id}?_=${Date.now()}`, {
+          signal: controller.signal,
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         if (!mountedRef.current) return;
         setJob(data);
         if (data.index_stats) setIndexInfo(data.index_stats);
+
         if (data.status === 'complete') {
-          terminal = true;
           setTimeline(data.result?.clips || []);
           stopPolling();
           refreshIndex(data.footage_root || footageRoot);
         } else if (data.status === 'failed') {
-          terminal = true;
           setError(data.error?.message || data.message || 'Analysis failed');
           stopPolling();
         }
       } catch (e) {
-        if (e?.name !== 'AbortError' && mountedRef.current) setError(e.message || 'Could not reach Footage Analyzer');
+        if (e?.name !== 'AbortError' && mountedRef.current) {
+          setError(e.message || 'Could not reach Footage Analyzer');
+        }
       } finally {
         pollingRef.current = false;
         if (pollAbortRef.current === controller) pollAbortRef.current = null;
-        if (mountedRef.current && !terminal && !pollRef.current && !pollingRef.current) {
-          pollRef.current = window.setTimeout(() => { pollRef.current = null; tick(); }, 1500);
-        }
       }
     };
+
+    // Show the newest stage immediately, then keep it live.
     tick();
+    pollRef.current = window.setInterval(tick, 750);
   };
 
   const startAnalysis = async () => {
