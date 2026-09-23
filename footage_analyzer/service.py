@@ -39,7 +39,8 @@ class JobStore:
             j=self.get(jid)
             if j and j.get("status") not in {"complete","failed"}:
                 root=j.get("footage_root","")
-                self.update(jid,status="failed",stage="error",progress=0,message=str(e),
+                self.update(jid,status="failed",stage="error",
+                             progress=int((j or {}).get("progress",0) or 0),message=str(e),
                              error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc(),
                                     "index_stats":self.cache_status(root) if root else {}})
 
@@ -337,7 +338,9 @@ class JobStore:
             self.update(jid,status="complete",stage="complete",progress=100,
                         message=f"Complete · {len(edl)} timeline clips",result=result,index_stats=self.cache_status(root))
         except Exception as e:
-            self.update(jid,status="failed",stage="error",progress=0,message=str(e),
+            current=self.get(jid) or {}
+            self.update(jid,status="failed",stage="error",
+                        progress=int(current.get("progress",0) or 0),message=str(e),
                         error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc(),
                                "index_stats":self.cache_status(root)})
 
