@@ -78,9 +78,26 @@ export default function FootageAnalyzerTab() {
       form.append('voiceover', voiceover);
       form.append('footage_root', footageRoot.trim());
       form.append('instruction', instruction);
-      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs`, { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Could not start analysis');
+      // Use XMLHttpRequest for the multipart upload. Some desktop/webview
+      // clients can close a fetch request while a File-backed FormData body is
+      // being sent; XHR keeps the upload request alive until the response arrives.
+      const data = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${ANALYZER_URL}/api/footage-analyzer/jobs`, true);
+        xhr.responseType = 'text';
+        xhr.onload = () => {
+          let body = {};
+          try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
+          if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+          else reject(new Error(body.detail || body.message || `Could not start analysis (HTTP ${xhr.status})`));
+        };
+        xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer. Check that the analyzer service is running.'));
+        xhr.onabort = () => reject(new Error('The upload request was aborted before Footage Analyzer received it.'));
+        xhr.ontimeout = () => reject(new Error('Timed out while starting Footage Analyzer.'));
+        xhr.timeout = 120000;
+        xhr.send(form);
+      });
+      if (!data?.id) throw new Error(data?.detail || 'Footage Analyzer did not return a job ID');
       setJob(data);
       pollJob(data.id);
     } catch (e) {
