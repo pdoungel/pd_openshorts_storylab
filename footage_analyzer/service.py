@@ -210,15 +210,54 @@ class JobStore:
                             message=f"Visual analysis · scene {done}/{total} · reused {s.get('reused',0)} · {current}",
                             current_file=current,visual_stats=s)
             data=enrich_index(str(idx),str(vis),progress=visual_progress)
+            analyzed_shots=[s for s in data.get("shots",[]) if str(s.get("description","")).strip()]
+            visual_failed=sum(1 for s in data.get("shots",[]) if not str(s.get("description","")).strip())
+            self.update(
+                jid,
+                stage="visual_analysis",
+                progress=70,
+                message=f"Visual analysis complete · {len(analyzed_shots)} usable scenes · {visual_failed} failed/retry",
+                current_file="",
+                visual_stats={
+                    "done": len(data.get("shots",[])),
+                    "total": len(data.get("shots",[])),
+                    "reused": int(self.get(jid).get("visual_stats",{}).get("reused",0) or 0),
+                    "failed": visual_failed,
+                    "usable": len(analyzed_shots),
+                },
+            )
+            if not analyzed_shots:
+                raise RuntimeError(
+                    "Visual analysis produced no usable scenes. Check the Gemini API/key "
+                    "and retry; completed indexing is preserved."
+                )
 
             self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
             req=plan(narr,j["instruction"])
-            (work/"visual_plan.json").write_text(json.dumps({"version":2,"requirements":req},ensure_ascii=False,indent=2),encoding="utf-8")
-            self.update(jid,stage="matching",progress=84,message="Matching narration to footage")
-            edl=build_visual_edl(narr,req,data.get("shots",[]))
+            (work/"visual_plan.json").write_text(
+                json.dumps({"version":2,"requirements":req},ensure_ascii=False,indent=2),
+                encoding="utf-8",
+            )
+            self.update(
+                jid,
+                stage="matching",
+                progress=84,
+                message=f"Matching {len(narr)} narration segments to {len(analyzed_shots)} usable scenes",
+            )
+            edl=build_visual_edl(narr,req,analyzed_shots)
             duration=max((float(x["end"]) for x in narr),default=0)
-            result={"version":3,"master":"voiceover","voiceover_duration":duration,"clips":edl,
-                    "requirements":req,"shot_count":len(data.get("shots",[]))}
+            result={
+                "version":4,
+                "master":"voiceover",
+                "voiceover_duration":duration,
+                "clips":edl,
+                "requirements":req,
+                "narration_segments":len(narr),
+                "shot_count":len(analyzed_shots),
+                "visual_failed":visual_failed,
+                "timeline_order":"voiceover",
+                "coverage_complete":True,
+            }
             (work/"edl.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
             self.update(jid,status="complete",stage="complete",progress=100,
                         message=f"Complete · {len(edl)} timeline clips",result=result,index_stats=self.cache_status(root))
