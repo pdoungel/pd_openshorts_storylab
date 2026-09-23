@@ -192,6 +192,9 @@ export default function FootageAnalyzerTab() {
     setFootageRoot(resolveData.path);
     setFolderResolutionError('');
     setError('');
+    // The folder is fully resolved at this point. The Analyze action is
+    // intentionally driven by footageRoot, not by the temporary File list.
+    if (mountedRef.current) setResolvingFolder(false);
     return resolveData;
   };
 
@@ -359,9 +362,9 @@ export default function FootageAnalyzerTab() {
             </div>
 
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
-              {resolvingFolder ? <Loader2 size={17} className="text-brass mt-0.5 shrink-0 animate-spin" /> : footageRoot ? <CheckCircle2 size={17} className="text-brass mt-0.5 shrink-0" /> : folderResolutionError ? <AlertTriangle size={17} className="text-brass mt-0.5 shrink-0" /> : <FolderOpen size={17} className="text-muted mt-0.5 shrink-0" />}
+              {resolvingFolder && !footageRoot ? <Loader2 size={17} className="text-brass mt-0.5 shrink-0 animate-spin" /> : footageRoot ? <CheckCircle2 size={17} className="text-brass mt-0.5 shrink-0" /> : folderResolutionError ? <AlertTriangle size={17} className="text-brass mt-0.5 shrink-0" /> : <FolderOpen size={17} className="text-muted mt-0.5 shrink-0" />}
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-ink2">{resolvingFolder ? 'Checking analyzer access…' : footageFolderName || 'No footage folder selected'}</p>
+                <p className="text-sm text-ink2">{resolvingFolder && !footageRoot ? 'Checking analyzer access…' : footageFolderName || 'No footage folder selected'}</p>
                 {footageRoot ? (
                   <>
                     <p className="text-xs text-muted mt-1 break-all">{footageRoot}</p>
@@ -399,7 +402,7 @@ export default function FootageAnalyzerTab() {
               <textarea className="input-field min-h-[92px] resize-y" placeholder="e.g. Prefer archival-looking footage and wide establishing shots when exact subjects are unavailable." value={instruction} onChange={e => setInstruction(e.target.value)} />
             </label>
 
-            {voiceover && footageRoot && !resolvingFolder && (
+            {voiceover && footageRoot && (
               <div className="rounded-input border border-rule bg-paper p-3 flex items-center gap-3">
                 <CheckCircle2 size={18} className="text-brass shrink-0" />
                 <div>
@@ -410,7 +413,7 @@ export default function FootageAnalyzerTab() {
             )}
 
             <div className="flex items-center gap-3">
-              <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || resolvingFolder || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
+              <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                 {job?.status === 'processing' ? ' analyzing…' : job?.status === 'failed' ? ' retry analysis' : ' analyze footage'}
               </button>
