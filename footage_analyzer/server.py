@@ -7,12 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from .service import JobStore
 
-app=FastAPI(title="OpenShorts Footage Analyzer",version="1.0")
+BUILD_ID="e1c4abb7d64dd366d164e78849a718cc6c84f6fb"
+app=FastAPI(title="OpenShorts Footage Analyzer",version="2.0-footage-mvp")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 store=JobStore()
 
 @app.get("/health")
-def health(): return {"ok":True,"service":"footage-analyzer"}
+def health():
+    return {"ok":True,"service":"footage-analyzer","build_id":BUILD_ID,"pid":os.getpid(),
+            "transcriber":os.getenv("FOOTAGE_TRANSCRIBER","gemini"),
+            "gemini_transcribe_model":os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_MODEL","gemini-3.5-transcribe")}
+
 
 @app.post("/api/footage-analyzer/jobs")
 async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...),instruction: str=Form("")):
