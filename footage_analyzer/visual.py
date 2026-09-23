@@ -8,7 +8,7 @@ from .cache import atomic_json
 
 def _json(text):
     text=(text or "").strip()
-    if text.startswith("\`\`\`"): text=text.replace("\`\`\`json","",1).replace("\`\`\`","").strip()
+    if text.startswith("```"): text=text.replace("```json","",1).replace("```","").strip()
     try: return json.loads(text)
     except Exception:
         a=text.find("{"); b=text.rfind("}")
