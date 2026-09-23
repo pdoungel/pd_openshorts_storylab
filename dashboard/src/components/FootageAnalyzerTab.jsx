@@ -221,10 +221,16 @@ export default function FootageAnalyzerTab() {
                     setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError(''); setIndexInfo(null);
                     if (!files.length) return;
                     const first = files[0];
-                    const folderName = (first.webkitRelativePath || '').split('/')[0] || '';
-                    setFootageFolderName(folderName);
+                    // Browser directory inputs are inconsistent in desktop
+                    // webviews: webkitRelativePath and File.path may both be
+                    // absent. The backend can resolve the folder from file
+                    // names/sizes, so never reject the selection just because
+                    // browser path metadata is missing.
+                    const relative = first.webkitRelativePath || '';
+                    const folderName = relative.split('/')[0] || '';
+                    setFootageFolderName(folderName || 'Selected footage folder');
                     const nativePath = first.path;
-                    const relativePath = (first.webkitRelativePath || '').replace(/^\/+|\/+$/g, '');
+                    const relativePath = relative.replace(/^\/+|\/+$/g, '');
                     if (nativePath && (nativePath.startsWith('/Users/') || nativePath.startsWith('/Volumes/'))) {
                       const rootPath = relativePath && nativePath.endsWith(relativePath)
                         ? nativePath.slice(0, nativePath.length - relativePath.length).replace(/\/$/, '')
@@ -255,7 +261,11 @@ export default function FootageAnalyzerTab() {
                         xhr.onabort = () => reject(new Error('Folder resolution request was aborted.'));
                         xhr.send(JSON.stringify({
                           folder_name: folderName,
-                          samples: files.slice(0, 20).map(f => ({ relative_path: f.webkitRelativePath, size: f.size }))
+                          samples: files.slice(0, 20).map(f => ({
+                            name: f.name,
+                            relative_path: f.webkitRelativePath || '',
+                            size: f.size
+                          }))
                         }));
                       });
                       if (!resolveData.path) throw new Error('Analyzer located the folder request but returned no filesystem path.');
