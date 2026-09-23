@@ -32,6 +32,7 @@ export default function FootageAnalyzerTab() {
   const [error, setError] = useState('');
   const [indexInfo, setIndexInfo] = useState(null);
   const [indexBusy, setIndexBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const folderInputRef = useRef(null);
   const pollRef = useRef(null);
   const pollAbortRef = useRef(null);
@@ -120,7 +121,8 @@ export default function FootageAnalyzerTab() {
     }
     setError('');
     setTimeline([]);
-    setJob({ status: 'queued', stage: 'queued', progress: 0, message: 'Starting…' });
+    setUploadProgress(0);
+    setJob({ status: 'queued', stage: 'queued', progress: 0, message: 'Uploading voiceover to Footage Analyzer…' });
     try {
       const form = new FormData();
       form.append('voiceover', voiceover);
@@ -133,6 +135,13 @@ export default function FootageAnalyzerTab() {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${ANALYZER_URL}/api/footage-analyzer/jobs`, true);
         xhr.responseType = 'text';
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && mountedRef.current) {
+            const pct = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(pct);
+            setJob(prev => prev?.status === 'queued' ? { ...prev, message: `Uploading voiceover… ${pct}%` } : prev);
+          }
+        };
         xhr.onload = () => {
           let body = {};
           try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
@@ -142,14 +151,18 @@ export default function FootageAnalyzerTab() {
         xhr.onerror = () => reject(new Error('Could not connect to Footage Analyzer. Check that the analyzer service is running.'));
         xhr.onabort = () => reject(new Error('The upload request was aborted before Footage Analyzer received it.'));
         xhr.ontimeout = () => reject(new Error('Timed out while starting Footage Analyzer.'));
-        xhr.timeout = 120000;
+        // Do not impose a short wall-clock timeout: the browser may be uploading
+        // a large WAV before the backend can create the job and return its ID.
+        xhr.timeout = 0;
         xhr.send(form);
       });
       if (!data?.id) throw new Error(data?.detail || 'Footage Analyzer did not return a job ID');
+      setUploadProgress(100);
       setJob(data);
       pollJob(data.id);
     } catch (e) {
       setError(e.message || 'Could not start analysis');
+      setUploadProgress(0);
       setJob(null);
     }
   };
@@ -415,7 +428,7 @@ export default function FootageAnalyzerTab() {
             <div className="flex items-center gap-3">
               <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                {job?.status === 'processing' ? ' analyzing…' : job?.status === 'failed' ? ' retry analysis' : ' analyze footage'}
+                {job?.status === 'queued' ? ` uploading… ${uploadProgress}%` : job?.status === 'processing' ? ' analyzing…' : job?.status === 'failed' ? ' retry analysis' : ' analyze footage'}
               </button>
               {job?.status === 'complete' && <span className="badge-ok"><CheckCircle2 size={12} /> complete</span>}
               {job?.status === 'failed' && <span className="badge-warn"><AlertTriangle size={12} /> resumable</span>}
@@ -430,7 +443,7 @@ export default function FootageAnalyzerTab() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-medium text-ink2">
-                        {job.status === 'failed' ? 'Analysis stopped — saved progress is available' : (
+                        {job.status === 'queued' ? 'Uploading voiceover…' : job.status === 'failed' ? 'Analysis stopped — saved progress is available' : (
                           job.stage === 'transcription' ? '🎙️ Transcribing audio…' :
                           job.stage === 'indexing' ? '🎬 Indexing / analyzing video files…' :
                           job.stage === 'visual_analysis' ? '🧠 Analyzing video…' :
@@ -442,7 +455,13 @@ export default function FootageAnalyzerTab() {
                       </p>
                       <span className="readout shrink-0">{job.progress || 0}%</span>
                     </div>
-                    {job.stage === 'transcription' ? (
+                    {job.status === 'queued' ? (
+                      <div className="mt-2 rounded-input border border-rule bg-paper p-3 space-y-1">
+                        <p className="readout">VOICEOVER UPLOAD</p>
+                        <p className="text-sm text-ink2">{uploadProgress}% · sending audio to analyzer</p>
+                        <div className="h-1.5 bg-paper rounded-full overflow-hidden"><div className="h-full bg-accent transition-all" style={{width: `${uploadProgress}%`}} /></div>
+                      </div>
+                    ) : job.stage === 'transcription' ? (
                       <div className="mt-2 rounded-input border border-rule bg-paper p-3 space-y-1">
                         <p className="readout">UPLOADED VOICEOVER · ACTUALLY PROCESSING</p>
                         <p className="text-sm text-ink2 truncate" title={job.voiceover_original_name || job.current_file}>
