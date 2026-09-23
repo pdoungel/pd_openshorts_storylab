@@ -70,6 +70,7 @@ export default function FootageAnalyzerTab() {
       if (!mountedRef.current || pollingRef.current) return;
       pollingRef.current = true;
       const controller = new AbortController();
+      let terminal = false;
       pollAbortRef.current = controller;
       try {
         const res = await fetch(\`\${ANALYZER_URL}/api/footage-analyzer/jobs/\${id}\`, { signal: controller.signal, cache: 'no-store' });
@@ -79,10 +80,12 @@ export default function FootageAnalyzerTab() {
         setJob(data);
         if (data.index_stats) setIndexInfo(data.index_stats);
         if (data.status === 'complete') {
+          terminal = true;
           setTimeline(data.result?.clips || []);
           stopPolling();
           refreshIndex(data.footage_root || footageRoot);
         } else if (data.status === 'failed') {
+          terminal = true;
           setError(data.error?.message || data.message || 'Analysis failed');
           stopPolling();
         }
@@ -91,7 +94,7 @@ export default function FootageAnalyzerTab() {
       } finally {
         pollingRef.current = false;
         if (pollAbortRef.current === controller) pollAbortRef.current = null;
-        if (mountedRef.current && !pollRef.current && !pollingRef.current) {
+        if (mountedRef.current && !terminal && !pollRef.current && !pollingRef.current) {
           pollRef.current = window.setTimeout(() => { pollRef.current = null; tick(); }, 1500);
         }
       }
