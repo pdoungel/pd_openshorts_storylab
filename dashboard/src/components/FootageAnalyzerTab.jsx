@@ -215,7 +215,7 @@ export default function FootageAnalyzerTab() {
               <label className="btn-quiet inline-flex cursor-pointer items-center gap-2">
                 <FolderOpen size={14} />
                 {resolvingFolder ? ' locating folder…' : ' choose footage folder'}
-                <input type="file" multiple webkitdirectory="" directory="" accept="video/*" className="hidden"
+                <input type="file" multiple webkitdirectory={true} directory={true} accept="video/*" className="hidden"
                   onChange={async e => {
                     const files = Array.from(e.target.files || []);
                     setFootage(files); setFootageRoot(''); setFootageFolderName(''); setFolderResolutionError(''); setError(''); setIndexInfo(null);
@@ -260,6 +260,11 @@ export default function FootageAnalyzerTab() {
                       });
                       if (!resolveData.path) throw new Error('Analyzer located the folder request but returned no filesystem path.');
 
+                      // This was the critical missing state update: the resolver
+                      // succeeded, but the UI never stored the returned path, so
+                      // Analyze remained disabled and the folder appeared to fail.
+                      setFootageRoot(resolveData.path);
+                      setFootageFolderName(resolveData.folder_name || folderName);
                       setFolderResolutionError('');
                     } catch (err) {
                       const message = err.message || 'Could not locate the selected folder';
@@ -451,7 +456,7 @@ export default function FootageAnalyzerTab() {
                     <button className="w-full text-left p-3.5 flex items-center gap-3" onClick={() => setExpanded(expanded === i ? null : i)}>
                       <div className="w-16 shrink-0"><p className="readout">{formatTime(clip.timeline_start ?? clip.start)}</p><p className="text-[10px] text-muted">→ {formatTime(clip.timeline_end ?? clip.end)}</p></div>
                       <div className="w-2 h-10 rounded-full bg-accent shrink-0 opacity-80" />
-                      <div className="min-w-0 flex-1"><p className="text-sm text-ink2 truncate">{clip.description || clip.visual_query || 'Visual match'}</p><p className="text-xs text-muted mt-1 truncate">{clip.source_path} · {formatTime(clip.source_start)}–{formatTime(clip.source_end)}</p></div>
+                      <div className="min-w-0 flex-1"><p className="text-sm text-ink2 truncate">{clip.description || clip.visual_query || 'Visual match'}</p><p className="text-xs text-muted mt-1 truncate">#{clip.sequence || i + 1} · narration {Number(clip.narration_index) + 1} · {clip.source_path} · {formatTime(clip.source_start)}–{formatTime(clip.source_end)}</p></div>
                       <span className={clip.match_type === 'direct' ? 'badge-ok' : clip.match_type === 'related' ? 'badge-brass' : 'badge-warn'}>{typeLabel[clip.match_type] || clip.match_type}</span>
                       <span className="readout hidden sm:block">{Math.round((clip.score || 0) * 100)}%</span>
                       <ChevronDown size={14} className={`text-muted transition-transform ${expanded === i ? 'rotate-180' : ''}`} />
