@@ -336,16 +336,18 @@ def transcribe(path, progress=None):
     device=os.getenv("FOOTAGE_WHISPER_DEVICE","cpu")
     compute_type=os.getenv("FOOTAGE_WHISPER_COMPUTE","int8")
     duration=_probe_duration(path)
-    def report(pct,message):
-        if progress: progress(pct,duration,message)
-    report(5,f"🎙️ Preparing audio · {Path(path).name}")
+    def report(pct, message):
+        if progress:
+            progress(pct, duration, message)
+    emit = progress or (lambda *_args: None)
+    report(5, f"🎙️ Preparing audio · {Path(path).name}")
 
     # Gemini is the reliable default for this desktop workflow: the same API key
     # already used for visual analysis can transcribe the uploaded voiceover,
     # including timestamps, without downloading a Whisper model into Docker.
     if os.getenv("FOOTAGE_TRANSCRIBER","gemini").lower()=="gemini":
         try:
-            return _gemini_transcribe(path, progress, duration)
+            return _gemini_transcribe(path, emit, duration)
         except Exception as exc:
             if os.getenv("FOOTAGE_GEMINI_LOCAL_FALLBACK", "1").lower() not in {"1", "true", "yes"}:
                 raise
