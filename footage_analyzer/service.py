@@ -159,12 +159,12 @@ class JobStore:
                         int(cached.get("size", -1)) == voice_size and
                         int(cached.get("mtime_ns", -1)) == voice_mtime_ns
                     )
-                    if cached.get("transcript") and (
-                        cached.get("sha256") == cached.get("voiceover_sha256") or
-                        same_file
-                    ):
+                    cached_sha = str(cached.get("sha256") or "")
+                    cached_voice_sha = str(cached.get("voiceover_sha256") or "")
+                    sha_identity = bool(cached_sha and cached_voice_sha and cached_sha == cached_voice_sha)
+                    if cached.get("transcript") and (same_file or sha_identity):
                         cached_tr=cached["transcript"]
-                        cached_sha256=str(cached.get("sha256") or "")
+                        cached_sha256=cached_sha
                 except Exception:
                     cached_tr=None
 
