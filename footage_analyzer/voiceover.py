@@ -119,25 +119,41 @@ def _gemini_transcribe(path, progress, duration):
         "Do not summarize, translate, rewrite, or invent words. Preserve the spoken language."
     )
     started=time.monotonic()
-    result={}
-    error={}
-    def call():
+    result={}; error={}
+    models=[model_name]
+    fallback=os.getenv("FOOTAGE_GEMINI_TRANSCRIBE_FALLBACK_MODEL","gemini-3.8-flash")
+    if fallback and fallback not in models: models.append(fallback)
+    response=None; last_error=None
+    for candidate in models:
+        result.clear(); error.clear(); started=time.monotonic()
+        def call(model=candidate):
+            try:
+                response=result["response"]=client.models.generate_content(model=model,contents=[uploaded,prompt],config=config)
+            except Exception as exc:
+                error["error"]=exc
+        thread=threading.Thread(target=call,daemon=True,name="gemini-transcription")
+        thread.start()
+        heartbeat=0
+        while thread.is_alive():
+            elapsed=int(time.monotonic()-started)
+            progress(min(19,10+heartbeat%10),duration,
+                     f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s · {candidate}")
+            heartbeat+=1
+            thread.join(timeout=1.0)
+        if "error" in error:
+            last_error=error["error"]
+            progress(10,duration,f"☁️ {candidate} unavailable · trying fallback")
+            continue
+        response=result.get("response")
         try:
-            response=client.models.generate_content(model=model_name,contents=[uploaded,prompt],config=config)
-            result["response"]=response
-        except Exception as exc: error["error"]=exc
-    thread=threading.Thread(target=call,daemon=True,name="gemini-transcription")
-    thread.start()
-    heartbeat=0
-    while thread.is_alive():
-        elapsed=int(time.monotonic()-started)
-        progress(min(19,10+heartbeat%10),duration,
-                 f"☁️ Gemini transcribing · {Path(path).name} · {elapsed}s")
-        heartbeat+=1
-        thread.join(timeout=1.0)
-    if "error" in error: raise error["error"]
-    response=result.get("response")
-    if response is None: raise RuntimeError("Gemini transcription returned no response.")
+            data=_parse_json(getattr(response,"text",""))
+            break
+        except Exception as exc:
+            last_error=exc
+            progress(10,duration,f"☁️ {candidate} returned unusable transcript · trying fallback")
+            continue
+    else:
+        raise RuntimeError(f"Gemini transcription failed: {last_error}")
     data=_parse_json(getattr(response,"text",""))
     raw=data.get("segments",[]) if isinstance(data,dict) else data
     if not isinstance(raw,list): raise ValueError("Gemini transcription JSON has no segments list.")
