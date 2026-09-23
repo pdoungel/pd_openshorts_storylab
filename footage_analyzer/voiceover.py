@@ -113,16 +113,35 @@ def _parse_timestamp(value):
 
 def _extract_word_annotations(interaction):
     words = []
-    for step in getattr(interaction, "steps", []) or []:
-        for content in getattr(step, "content", []) or []:
-            for annotation in getattr(content, "annotations", []) or []:
-                if getattr(annotation, "type", None) != "word_info":
-                    continue
-                text = str(getattr(annotation, "text", "") or "").strip()
-                start = _parse_timestamp(getattr(annotation, "start_offset", None))
-                end = _parse_timestamp(getattr(annotation, "end_offset", None))
+    def walk(value):
+        if value is None:
+            return
+        if isinstance(value, dict):
+            if value.get("type") == "word_info":
+                text = str(value.get("text", "") or "").strip()
+                start = _parse_timestamp(value.get("start_offset"))
+                end = _parse_timestamp(value.get("end_offset"))
                 if text and start is not None and end is not None and end > start:
                     words.append({"word": text, "start": start, "end": end})
+            for child in value.values():
+                walk(child)
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                walk(child)
+            return
+        if getattr(value, "type", None) == "word_info":
+            text = str(getattr(value, "text", "") or "").strip()
+            start = _parse_timestamp(getattr(value, "start_offset", None))
+            end = _parse_timestamp(getattr(value, "end_offset", None))
+            if text and start is not None and end > start:
+                words.append({"word": text, "start": start, "end": end})
+        for attr in ("annotations", "content", "steps", "output"):
+            child = getattr(value, attr, None)
+            if child is not None:
+                walk(child)
+
+    walk(interaction)
     words.sort(key=lambda item: (item["start"], item["end"]))
     return words
 
