@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect, lazy, Suspense } from 'react'
+import React, { StrictMode, useState, useEffect, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import Landing from './Landing.jsx'
@@ -70,6 +70,49 @@ function DeletedView() {
   );
 }
 
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[OpenShorts] App render error:', error, info);
+  }
+
+  handleReload = () => {
+    window.location.reload();
+  };
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    const error = this.state.error;
+    return (
+      <div className="min-h-screen bg-paper text-ink2 flex items-center justify-center p-6">
+        <div className="card max-w-2xl w-full p-6">
+          <p className="eyebrow mb-2">APP ERROR</p>
+          <h1 className="font-display lowercase text-2xl text-ink">OpenShorts could not render the app</h1>
+          <p className="text-sm text-muted mt-3">
+            The frontend loaded, but a React component failed during startup.
+          </p>
+          <pre className="mt-4 p-4 rounded-input bg-paper3 border border-rule overflow-auto text-xs text-warn whitespace-pre-wrap">
+            {error?.stack || error?.message || String(error)}
+          </pre>
+          <div className="mt-4 flex gap-3">
+            <button className="btn-primary" onClick={this.handleReload}>reload app</button>
+            <button className="btn-ghost" onClick={() => console.error(error)}>show error in console</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
 function Root() {
   const resolveView = () => {
     const hash = window.location.hash || '';
@@ -107,7 +150,7 @@ function Root() {
   if (view === 'auth') {
     return <div className="min-h-screen flex items-center justify-center bg-background text-zinc-400">Signing you in…</div>;
   }
-  if (view === 'app') return <App />;
+  if (view === 'app') return <AppErrorBoundary><App /></AppErrorBoundary>;
   return <Landing onLaunchApp={handleLaunchApp} />;
 }
 

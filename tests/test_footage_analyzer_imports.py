@@ -1,0 +1,10 @@
+def test_footage_analyzer_modules_import():
+    import footage_analyzer.cache
+    import footage_analyzer.embeddings
+    import footage_analyzer.indexer
+    import footage_analyzer.matcher
+    import footage_analyzer.planner
+    import footage_analyzer.server
+    import footage_analyzer.service
+    import footage_analyzer.visual
+    import footage_analyzer.voiceover

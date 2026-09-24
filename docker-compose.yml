@@ -24,6 +24,28 @@ services:
     depends_on:
       - backend
 
+  footage-analyzer:
+    build:
+      context: .
+      dockerfile: footage_analyzer/Dockerfile
+    container_name: openshorts-footage-analyzer
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./footage_analyzer:/app/footage_analyzer
+      - ./workspace:/app/workspace
+      - ./exports:/app/exports
+      # The UI may resolve a folder to either location on macOS.
+      # Mount both canonical roots so the returned host path is directly usable
+      # by the analyzer; no manual HOST_MEDIA_ROOT configuration is required.
+      - /Users:/Users:ro
+      - /Volumes:/Volumes:ro
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - FOOTAGE_ANALYZER_WORKDIR=/app/workspace/footage_analyzer
+      - FOOTAGE_EXPORT_DIR=/app/exports
+    restart: unless-stopped
+
   renderer:
     build:
       context: .

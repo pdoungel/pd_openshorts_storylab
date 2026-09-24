@@ -74,3 +74,9 @@ Thumbs.db
 # Local backup copies
 *.before-*
 *.backup-storage
+
+# Footage Analyzer local data
+workspace/
+exports/
+.venv-fa/
+.claude/

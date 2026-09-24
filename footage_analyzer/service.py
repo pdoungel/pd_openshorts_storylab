@@ -1,0 +1,455 @@
+"""Job orchestration for the independent Footage Analyzer backend."""
+from __future__ import annotations
+import json, os, threading, traceback, uuid, time
+from pathlib import Path
+from .voiceover import transcribe, sentence_segments
+from .indexer import build_index
+from .visual import enrich_index
+from .planner import plan
+from .matcher import build_visual_edl, _text as _shot_text
+from .embeddings import warm
+from .rerank import choose
+from .metadata import generate as generate_metadata
+from .render import render as render_video, SIZES as RENDER_SIZES
+from .cache import cache_dir, cache_size, human_size, seed_from_job, clear_cache, replace_file
+
+def export_dir():
+    default=Path(os.getenv("FOOTAGE_ANALYZER_WORKDIR","workspace/footage_analyzer")).expanduser().resolve().parent.parent/"exports"
+    return Path(os.getenv("FOOTAGE_EXPORT_DIR") or default)
+
+
+def export_video(path,job,meta):
+    """Copy the render to the exports folder with a readable name, plus the YouTube text beside it."""
+    import re, shutil
+    stem=Path(job.get("voiceover_original_name") or "video").stem
+    stem=re.sub(r"^[0-9a-f]{32}-","",stem)
+    stem=re.sub(r"[^A-Za-z0-9._ -]+","_",stem).strip() or "video"
+    stamp=time.strftime("%Y%m%d-%H%M")
+    aspect=(job.get("aspect") or "16:9").replace(":","x")
+    out_dir=export_dir(); out_dir.mkdir(parents=True,exist_ok=True)
+    target=out_dir/f"{stem}_{aspect}_{stamp}.mp4"
+    shutil.copy2(path,target)
+    if meta:
+        sections=[
+            ("TITLE", meta.get("title", "")),
+            ("TITLE OPTIONS", "\n".join(meta.get("title_options") or [])),
+            ("DESCRIPTION", meta.get("description", "")),
+            ("TAGS", ", ".join(meta.get("tags") or [])),
+        ]
+        text="\n\n".join(f"{name}\n{body}" for name,body in sections)
+        target.with_suffix(".youtube.txt").write_text(text,encoding="utf-8")
+    return str(target)
+
+
+class JobStore:
+    def __init__(self, root=None):
+        self.root=Path(root or os.getenv("FOOTAGE_ANALYZER_WORKDIR","workspace/footage_analyzer")).expanduser()
+        self.root.mkdir(parents=True,exist_ok=True)
+        self.jobs={}; self.lock=threading.RLock()
+
+    def _save(self,j):
+        p=self.root/j["id"]; p.mkdir(parents=True,exist_ok=True)
+        tmp=p/"job.json.tmp"; tmp.write_text(json.dumps(j,ensure_ascii=False,indent=2),encoding="utf-8"); replace_file(tmp,p/"job.json")
+
+    def _render(self,jid,result,voice,work,meta,base_progress=90):
+        j=self.get(jid)
+        aspect=j.get("aspect") or "16:9"; fit=j.get("fit") or "blur"
+        def render_progress(done,total):
+            self.update(jid,stage="rendering",progress=base_progress+int((99-base_progress)*done/max(total,1)),
+                        message=f"🎬 Rendering {aspect} video · clip {done}/{total}")
+        try:
+            path=render_video(result,voice,work/"final.mp4",progress=render_progress,aspect=aspect,fit=fit)["path"]
+        except Exception as exc:
+            return "","",str(exc)
+        try:
+            export=export_video(path,j,meta)
+        except Exception as exc:
+            print(f"[footage-analyzer] export copy failed: {exc}",flush=True)
+            export=""
+        return path,export,None
+
+    def rerender(self,jid,aspect,fit):
+        j=self.get(jid)
+        if not j or j.get("status")!="complete" or not j.get("result"):
+            raise ValueError("Only a completed analysis can be re-rendered.")
+        work=self.root/jid
+        voice=Path(j.get("voiceover_job_path") or work/"script_voiceover.wav")
+        self.update(jid,status="processing",stage="rendering",progress=1,aspect=aspect,fit=fit,
+                    message=f"🎬 Re-rendering as {aspect}")
+        def worker():
+            path,export,err=self._render(jid,j["result"],voice,work,j.get("metadata"),base_progress=1)
+            self.update(jid,status="complete",stage="complete",progress=100,video_path=path,export_path=export,
+                        render_error=err,message=f"Complete · re-rendered as {aspect}" if path else f"Re-render failed · {err}")
+        threading.Thread(target=worker,daemon=True,name=f"footage-render-{jid[:8]}").start()
+        return self.get(jid)
+
+    def create(self,voiceover,footage_root,instruction="",script="",visual_cues="",render=True,aspect="16:9",fit="blur"):
+        jid=str(uuid.uuid4()); root=str(Path(footage_root).expanduser().resolve())
+        original_name=Path(voiceover).name if voiceover else "script_voiceover.wav"
+        job={"id":jid,"status":"processing","stage":"starting","progress":0,"message":"Starting analyzer worker…","current_file":"",
+             "voiceover":voiceover,"voiceover_original_name":original_name,"voiceover_job_path":"",
+             "voiceover_sha256":"","voiceover_duration":0,"transcript_segment_count":0,
+             "footage_root":root,"instruction":instruction,"script":script,"visual_cues":visual_cues,
+             "render":bool(render),"aspect":aspect,"fit":fit,"video_path":"","export_path":"","render_error":None,"metadata":None,
+             "error":None,"result":None,
+             "updated_at":time.time(),"update_seq":0}
+        with self.lock:
+            self.jobs[jid]=job; self._save(job)
+        threading.Thread(target=self._run_wrapper,args=(jid,),daemon=True,name=f"footage-analyzer-{jid[:8]}").start()
+        return job
+
+    def _run_wrapper(self,jid):
+        try:
+            self.run(jid)
+        except Exception as e:
+            j=self.get(jid)
+            if j and j.get("status") not in {"complete","failed"}:
+                root=j.get("footage_root","")
+                self.update(jid,status="failed",stage="error",
+                             progress=int((j or {}).get("progress",0) or 0),message=str(e),
+                             error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc(),
+                                    "index_stats":self.cache_status(root) if root else {}})
+
+    def get(self,jid):
+        # Persisted job.json is authoritative. This prevents the UI from
+        # remaining on the initial POST response after a process restart.
+        p=self.root/jid/"job.json"
+        with self.lock:
+            try:
+                if p.exists():
+                    disk=json.loads(p.read_text(encoding="utf-8"))
+                    self.jobs[jid]=dict(disk)
+                    return disk
+            except Exception:
+                pass
+            return dict(self.jobs[jid]) if jid in self.jobs else None
+
+    def update(self,jid,**kw):
+        with self.lock:
+            job=self.jobs.get(jid)
+            if job is None:
+                p=self.root/jid/"job.json"
+                if not p.exists(): return
+                try: job=json.loads(p.read_text(encoding="utf-8"))
+                except Exception: return
+                self.jobs[jid]=job
+            job.update(kw)
+            job["updated_at"]=time.time()
+            job["update_seq"]=int(job.get("update_seq",0))+1
+            self._save(job)
+
+    def _find_previous_job(self,root,exclude=None):
+        root=str(Path(root).resolve()); best=None
+        for p in self.root.iterdir():
+            if not p.is_dir() or p.name=="library" or p.name==exclude: continue
+            meta=p/"job.json"
+            if not meta.exists(): continue
+            try:
+                j=json.loads(meta.read_text(encoding="utf-8"))
+                if str(Path(j.get("footage_root","")).resolve())==root:
+                    if best is None or meta.stat().st_mtime > best[1]: best=(p,meta.stat().st_mtime)
+            except Exception: pass
+        return best[0] if best else None
+
+    def cache_status(self,root):
+        c=cache_dir(self.root,root); size=cache_size(c)
+        manifest=c/"file_manifest.json"; visual=c/"visual_index.json"
+        stats={}
+        try: stats=json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else {}
+        except Exception: stats={}
+        entries=list(stats.values()); total=len(entries)
+        complete=sum(1 for x in entries if x.get("status")=="complete")
+        failed=sum(1 for x in entries if x.get("status")=="failed")
+        visual_done=0
+        if visual.exists():
+            try: visual_done=sum(1 for x in json.loads(visual.read_text(encoding="utf-8")).get("shots",[]) if x.get("description"))
+            except Exception: pass
+        return {"root":str(Path(root).resolve()),"cache_path":str(c),"size_bytes":size,
+                "size":human_size(size),"files_total":total,"files_indexed":complete,
+                "files_failed":failed,"visual_shots_completed":visual_done}
+
+    def clear_cache(self,root):
+        return clear_cache(self.root,root)
+
+    def run(self,jid):
+        j=self.get(jid); work=self.root/jid
+        root=j["footage_root"]; cache=cache_dir(self.root,root)
+        try:
+            self.update(jid,status="processing",stage="starting",progress=1,message="Analyzer worker started…",current_file="")
+            # Do not enter the resume/seed path before transcription. Older jobs
+            # could spend a long time copying large visual indexes here, leaving
+            # the UI at 2% and making it look as if voiceover processing never began.
+            work.mkdir(parents=True,exist_ok=True)
+            if not j.get("voiceover"):
+                tts_out=work/"script_voiceover.wav"
+                if not tts_out.exists():
+                    def tts_progress(done,total):
+                        self.update(jid,stage="voiceover_synthesis",progress=2+int(3*done/max(total,1)),
+                                    message=f"🗣️ Generating voiceover from script · part {min(done+1,total)}/{total}")
+                    from .tts import synthesize
+                    synthesize(j["script"],str(tts_out),progress=tts_progress)
+                self.update(jid,voiceover=str(tts_out))
+                j=self.get(jid)
+            # Keep the exact uploaded filename inside the job directory so the
+            # UI and persisted job state can prove which file is being processed.
+            src=Path(j["voiceover"]).resolve()
+            voice=work / Path(j.get("voiceover_original_name") or src.name).name
+            voice.parent.mkdir(parents=True,exist_ok=True)
+            if not voice.exists():
+                import shutil; shutil.copy2(src,voice)
+            self.update(jid,stage="transcription",progress=4,
+                        message=f"🎙️ Uploaded voiceover confirmed · {voice.name}",
+                        current_file=voice.name,voiceover_original_name=src.name,
+                        voiceover_job_path=str(voice))
+            tr_path=work/"voiceover.json"
+            # Keep the transcript in the persistent footage-library cache too.
+            # A new job after a crash/restart can therefore reuse transcription
+            # instead of starting the whole voiceover stage again.
+            import hashlib
+            self.update(jid,status="processing",stage="transcription",progress=5,
+                        message=f"🎙️ Preparing audio transcription · {voice.name}",current_file=voice.name)
+                        # Do not hash the entire voiceover before transcription. Large WAV files
+            # can be many GB and a full SHA256 pass can make the UI appear stuck at 5%
+            # for a very long time. Use a cheap filesystem fingerprint for cache lookup,
+            # then compute SHA256 after transcription for durable cache identity.
+            voice_stat=voice.stat()
+            voice_size=int(voice_stat.st_size)
+            voice_mtime_ns=int(voice_stat.st_mtime_ns)
+            self.update(
+                jid,
+                stage="transcription",
+                progress=5,
+                message=f"🎙️ Voiceover ready for transcription · {voice.name} · {voice_size / (1024**3):.2f} GB",
+                current_file=voice.name,
+                voiceover_original_name=src.name,
+                voiceover_job_path=str(voice),
+            )
+            cached_tr_path=cache/"voiceover_cache.json"
+            cached_tr=None
+            cached_sha256=""
+            if cached_tr_path.exists():
+                try:
+                    cached=json.loads(cached_tr_path.read_text(encoding="utf-8"))
+                    same_file=(
+                        cached.get("sha256") == cached.get("voiceover_sha256") and
+                        int(cached.get("size", -1)) == voice_size and
+                        int(cached.get("mtime_ns", -1)) == voice_mtime_ns
+                    )
+                    cached_sha = str(cached.get("sha256") or "")
+                    cached_voice_sha = str(cached.get("voiceover_sha256") or "")
+                    sha_identity = bool(cached_sha and cached_voice_sha and cached_sha == cached_voice_sha)
+                    if cached.get("transcript") and (same_file or sha_identity):
+                        cached_tr=cached["transcript"]
+                        cached_sha256=cached_sha
+                except Exception:
+                    cached_tr=None
+
+            if tr_path.exists():
+                tr=json.loads(tr_path.read_text(encoding="utf-8"))
+                self.update(jid,status="processing",stage="transcription",progress=8,
+                            message=f"Voiceover transcription reused · {voice.name}",current_file=voice.name)
+            elif cached_tr is not None:
+                tr=cached_tr
+                tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
+                self.update(jid,status="processing",stage="transcription",progress=8,
+                            message=f"Voiceover transcription reused · {voice.name}",current_file=voice.name)
+            else:
+                self.update(jid,status="processing",stage="transcription",progress=5,
+                            message=f"🎙️ Transcribing audio · {voice.name}",current_file=voice.name)
+                def transcription_progress(pct, duration, message):
+                    # voiceover.py reports the analyzer-wide 5–20% range directly.
+                    # Do not remap it again or the UI would remain near 5%.
+                    self.update(
+                        jid,
+                        status="processing",
+                        stage="transcription",
+                        progress=max(5, min(20, int(pct))),
+                        message=message,
+                        current_file=voice.name,
+                    )
+                tr=transcribe(str(voice), progress=transcription_progress)
+                tr_path.write_text(json.dumps(tr,ensure_ascii=False,indent=2),encoding="utf-8")
+                # Do not hash multi-GB voiceovers on the critical path.
+                # Size + mtime are the durable cache fingerprint; an optional full
+                # SHA256 can be enabled explicitly for environments that require it.
+                voice_sha256=""
+                if os.getenv("FOOTAGE_HASH_VOICEOVER", "0").lower() in {"1", "true", "yes"}:
+                    self.update(
+                        jid,
+                        status="processing",
+                        stage="transcription",
+                        progress=19,
+                        message=f"🎙️ Verifying voiceover cache identity · {voice.name}",
+                        current_file=voice.name,
+                    )
+                    digest=hashlib.sha256()
+                    with voice.open("rb") as fh:
+                        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    voice_sha256=digest.hexdigest()
+
+                from .cache import atomic_json
+                atomic_json(
+                    cached_tr_path,
+                    {
+                        "version":3,
+                        "sha256":voice_sha256,
+                        "voiceover_sha256":voice_sha256,
+                        "size":voice_size,
+                        "mtime_ns":voice_mtime_ns,
+                        "transcript":tr,
+                    },
+                )
+                self.update(
+                    jid,
+                    status="processing",
+                    stage="transcription",
+                    progress=20,
+                    message=f"🎙️ Transcription complete · {voice.name}",
+                    current_file=voice.name,
+                    voiceover_sha256=voice_sha256,
+                )
+            narr=sentence_segments(tr)
+            self.update(jid,stage="transcription",progress=20,
+                        message=f"🎙️ Voiceover ready · {voice.name} · {len(narr)} transcript segments",
+                        current_file=voice.name,transcript_segment_count=len(narr),
+                        voiceover_duration=float(tr.get("duration",0) or 0))
+            if not narr: raise RuntimeError("No speech segments were detected in the voiceover.")
+
+            # Resume only when the persistent library cache is already present.
+            # Legacy job seeding is deliberately deferred until after the
+            # voiceover stage, so the user always sees real transcription
+            # progress first.
+            previous=self._find_previous_job(root,jid)
+            if previous:
+                cache.mkdir(parents=True,exist_ok=True)
+                missing=[name for name in ("footage_index.json","visual_index.json")
+                         if not (cache/name).exists() and (previous/name).exists()]
+                if missing:
+                    self.update(
+                        jid,
+                        stage="resuming",
+                        progress=20,
+                        message=f"Resuming saved footage index · {', '.join(missing)}",
+                        current_file="",
+                    )
+                    seed_from_job(cache,previous)
+
+            has_persistent_index = (cache / "footage_index.json").exists()
+            self.update(
+                jid,
+                stage="indexing",
+                progress=20,
+                message="Resuming persistent footage index…" if has_persistent_index else "Indexing footage library…",
+            )
+            idx=cache/"footage_index.json"
+            def index_progress(done,total,name,stats=None):
+                s=dict(stats or {})
+                s.update({"done":done,"total":total})
+                self.update(jid,progress=20+int(15*done/max(total,1)),
+                            message=f"Indexing footage · {done}/{total} · reused {s.get('reused',0)} · {name}",
+                            current_file=name,index_stats=s)
+            shots=build_index(root,str(idx),progress=index_progress)
+            if not shots: raise RuntimeError("No video files were found in the selected footage folder.")
+
+            self.update(jid,stage="visual_analysis",progress=35,message=f"Resuming visual analysis · {len(shots)} shots")
+            vis=cache/"visual_index.json"
+            def visual_progress(done,total,current,stats=None):
+                s=dict(stats or {})
+                s.update({"done":done,"total":total})
+                self.update(jid,progress=35+int(35*done/max(total,1)),
+                            message=f"Visual analysis · scene {done}/{total} · reused {s.get('reused',0)} · {current}",
+                            current_file=current,visual_stats=s)
+            data=enrich_index(str(idx),str(vis),progress=visual_progress)
+            analyzed_shots=[s for s in data.get("shots",[]) if str(s.get("description","")).strip()]
+            visual_failed=sum(1 for s in data.get("shots",[]) if not str(s.get("description","")).strip())
+            warnings=[]
+            try:
+                vm=json.loads((cache/"visual_manifest.json").read_text(encoding="utf-8"))
+                if any("RESOURCE_EXHAUSTED" in str(v.get("error","")) for v in vm.values() if v.get("status")=="failed"):
+                    warnings.append(
+                        f"Gemini quota exhausted: {visual_failed} shots could not be analyzed and were left out of "
+                        "matching. Free-tier keys allow about 20 requests per model per day; retry later (finished "
+                        "shots are kept) or enable billing on the Gemini key."
+                    )
+            except Exception:
+                pass
+            self.update(
+                jid,
+                stage="visual_analysis",
+                progress=70,
+                message=f"Visual analysis complete · {len(analyzed_shots)} usable scenes · {visual_failed} failed/retry",
+                current_file="",
+                visual_stats={
+                    "done": len(data.get("shots",[])),
+                    "total": len(data.get("shots",[])),
+                    "reused": int(self.get(jid).get("visual_stats",{}).get("reused",0) or 0),
+                    "failed": visual_failed,
+                    "usable": len(analyzed_shots),
+                },
+            )
+            if not analyzed_shots:
+                raise RuntimeError(
+                    "Visual analysis produced no usable scenes. Check the Gemini API/key "
+                    "and retry; completed indexing is preserved."
+                )
+
+            self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
+            cues=j.get("visual_cues","")
+            req=plan(narr,j["instruction"],cues)
+            (work/"visual_plan.json").write_text(
+                json.dumps({"version":2,"requirements":req},ensure_ascii=False,indent=2),
+                encoding="utf-8",
+            )
+            self.update(jid,stage="matching",progress=76,
+                        message=f"Embedding {len(analyzed_shots)} scenes and {len(req)} visual intents")
+            warm([_shot_text(s) for s in analyzed_shots]+[r.get("visual_query","") for r in req])
+            def rerank_progress(done,total):
+                self.update(jid,stage="matching",progress=78+int(8*done/max(total,1)),
+                            message=f"Editor pass · choosing best shot per line · batch {min(done+1,total)}/{total}")
+            preferred=choose(narr,req,analyzed_shots,cues,progress=rerank_progress)
+            self.update(
+                jid,
+                stage="matching",
+                progress=86,
+                message=f"Matching {len(narr)} narration segments to {len(analyzed_shots)} usable scenes",
+            )
+            edl=build_visual_edl(narr,req,analyzed_shots,preferred)
+            duration=max(float(tr.get("duration",0) or 0),max((float(x["end"]) for x in narr),default=0))
+            result={
+                "version":5,
+                "reranked":bool(preferred),
+                "warnings":warnings+([] if preferred or not os.getenv("GEMINI_API_KEY") else
+                                     ["Editor pass (Gemini rerank) was unavailable; shots were chosen by embeddings only."]),
+                "master":"voiceover",
+                "voiceover_duration":duration,
+                "clips":edl,
+                "requirements":req,
+                "narration_segments":len(narr),
+                "shot_count":len(analyzed_shots),
+                "visual_failed":visual_failed,
+                "timeline_order":"voiceover",
+                "coverage_complete":True,
+            }
+            (work/"edl.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.update(jid,result=result)
+
+            self.update(jid,stage="metadata",progress=88,message="Writing YouTube title, description and tags")
+            meta=generate_metadata(narr,edl,duration,j["instruction"])
+            (work/"metadata.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.update(jid,metadata=meta)
+
+            video_path,export_path,render_error="","",None
+            if j.get("render",True):
+                video_path,export_path,render_error=self._render(jid,result,voice,work,meta)
+            self.update(jid,status="complete",stage="complete",progress=100,
+                        message=f"Complete · {len(edl)} timeline clips" + (" · video rendered" if video_path else ""),
+                        video_path=video_path,export_path=export_path,render_error=render_error,
+                        index_stats=self.cache_status(root))
+        except Exception as e:
+            current=self.get(jid) or {}
+            self.update(jid,status="failed",stage="error",
+                        progress=int(current.get("progress",0) or 0),message=str(e),
+                        error={"type":type(e).__name__,"message":str(e),"traceback":traceback.format_exc(),
+                               "index_stats":self.cache_status(root)})
+

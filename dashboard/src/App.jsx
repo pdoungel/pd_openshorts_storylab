@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, FolderOpen, Film } from 'lucide-react';
+import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, FolderOpen, Film, Search } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import McpConnectCard from './components/McpConnectCard';
@@ -23,6 +23,7 @@ import TrialGate from './components/TrialGate';
 import AdvancedBanner from './components/AdvancedBanner';
 import HistoryTab from './components/HistoryTab';
 import StoryLabTab from './components/StoryLabTab';
+const FootageAnalyzerTab = React.lazy(() => import('./components/FootageAnalyzerTab.jsx'));
 import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
@@ -1075,7 +1076,8 @@ function App() {
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History', short: 'history' }] : []),
     { id: 'projects', ord: '07', icon: FolderOpen, label: 'Projects', short: 'projects' },
     { id: 'storylab', ord: '08', icon: Film, label: 'Story Lab', short: 'story lab', primary: true },
-    { id: 'settings', ord: '09', icon: Settings, label: 'Settings', short: 'settings' },
+    { id: 'footage-analyzer', ord: '09', icon: Search, label: 'Footage Analyzer', short: 'footage', primary: true },
+    { id: 'settings', ord: '10', icon: Settings, label: 'Settings', short: 'settings' },
   ];
   const activeNav = navItems.find((n) => n.id === activeTab);
 
@@ -1796,6 +1798,11 @@ function App() {
                 <HistoryTab onReopenProject={restoreProject} />
               </div>
             </div>
+          )}
+
+          {/* View: Footage Analyzer */}
+          {activeTab === 'footage-analyzer' && (
+            <FootageAnalyzerTab />
           )}
 
           {/* View: Story Lab */}
