@@ -5,3 +5,4 @@ faster-whisper==1.2.1
 scenedetect==0.7
 google-genai==2.25.0
 Pillow==12.2.0
+numpy>=2

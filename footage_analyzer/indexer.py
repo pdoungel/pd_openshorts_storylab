@@ -31,7 +31,9 @@ def detect_scenes(path):
         from scenedetect.detectors import ContentDetector
         video=open_video(path); manager=SceneManager()
         manager.add_detector(ContentDetector()); manager.detect_scenes(video=video)
-        return [(float(a.get_seconds()),float(b.get_seconds())) for a,b in manager.get_scene_list()],float(video.frame_rate)
+        scenes=[(float(a.get_seconds()),float(b.get_seconds())) for a,b in manager.get_scene_list()]
+        # A clip with no cut yields an empty list; it is still one usable shot.
+        return scenes or [(0.0,probe_duration(path))],float(video.frame_rate)
     except Exception:
         duration=probe_duration(path)
         return [(0.0,duration)],0.0
@@ -64,7 +66,7 @@ def build_index(root,output,max_files=None,progress=None):
     for number,path in enumerate(files,1):
         key=str(path.resolve()); seen.add(key)
         fp=file_fingerprint(path); entry=previous.get(key,{})
-        unchanged=entry.get("fingerprint")==fp and entry.get("status")=="complete"
+        unchanged=entry.get("fingerprint")==fp and entry.get("status")=="complete" and bool(entry.get("shots"))
         # Old entries without fingerprints are reusable when they contain shots.
         legacy_reusable=entry.get("fingerprint") is None and entry.get("shots")
         if unchanged or legacy_reusable:

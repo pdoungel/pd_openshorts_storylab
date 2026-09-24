@@ -12,6 +12,81 @@ app=FastAPI(title="OpenShorts Footage Analyzer",version="2.0-footage-mvp")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 store=JobStore()
 
+_SKIP_DIRS={"$recycle.bin","system volume information","windows","program files",
+            "program files (x86)","programdata","appdata","node_modules",".git","library"}
+
+
+def _search_roots():
+    env=os.getenv("FOOTAGE_SEARCH_ROOTS")
+    if env:
+        return [Path(p) for p in env.split(os.pathsep) if p.strip() and Path(p).is_dir()]
+    if os.name=="nt":
+        import string
+        system=Path(os.environ.get("SystemDrive","C:")+"\\")
+        drives=[Path(f"{d}:\\") for d in string.ascii_uppercase if Path(f"{d}:\\").exists()]
+        # Walking the whole system drive is slow; on it only the user profile is searched.
+        return [d for d in drives if d!=system]+[Path.home()]
+    return [p for p in (Path("/Users"),Path("/Volumes")) if p.exists()]
+
+
+def _find(roots, want_dir=None, want_file=None, size=None, timeout=12, limit=100):
+    """Locate a folder or file under the search roots.
+
+    macOS/Linux (including the Docker image) use the system `find`, which is what
+    the original Mac-only implementation used and is far faster on large media
+    volumes. Windows has no `find` equivalent, so it walks with Python.
+    """
+    if os.name!="nt" and shutil.which("find"):
+        return _posix_find(roots, want_dir, want_file, size, timeout, limit)
+    return _walk_find(roots, want_dir, want_file, size, timeout, limit)
+
+
+def _posix_find(roots, want_dir=None, want_file=None, size=None, timeout=12, limit=100):
+    import subprocess
+    args=[]
+    for root in roots:
+        if want_dir:
+            args += [str(root), "-type", "d", "-name", want_dir, "-print", "-prune"]
+        else:
+            args += [str(root), "-type", "f", "-name", want_file]
+            if size is not None:
+                args += ["-size", f"{size}c"]
+            args += ["-print"]
+    try:
+        p=subprocess.run(["find", *args], capture_output=True, text=True, timeout=timeout, check=False)
+        out=p.stdout
+    except subprocess.TimeoutExpired as exc:
+        out=exc.stdout.decode(errors="ignore") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+    except OSError:
+        return []
+    return [Path(x) for x in out.splitlines() if x.strip()][:limit]
+
+
+def _walk_find(roots, want_dir=None, want_file=None, size=None, timeout=12, limit=100):
+    norm=os.path.normcase
+    deadline=time.monotonic()+timeout
+    hits=[]
+    for root in roots:
+        for dirpath,dirnames,filenames in os.walk(root, onerror=lambda e: None):
+            if time.monotonic()>deadline or len(hits)>=limit:
+                return hits
+            dirnames[:]=[d for d in dirnames if not d.startswith((".","$")) and d.lower() not in _SKIP_DIRS]
+            if want_dir:
+                for d in [d for d in dirnames if norm(d)==norm(want_dir)]:
+                    hits.append(Path(dirpath)/d)
+                    dirnames.remove(d)
+            if want_file:
+                for f in filenames:
+                    if norm(f)!=norm(want_file):
+                        continue
+                    p=Path(dirpath)/f
+                    try:
+                        if size is None or p.stat().st_size==size:
+                            hits.append(p)
+                    except OSError:
+                        pass
+    return hits
+
 @app.get("/health")
 def health():
     return {"ok":True,"service":"footage-analyzer","build_id":BUILD_ID,"pid":os.getpid(),
@@ -20,19 +95,27 @@ def health():
 
 
 @app.post("/api/footage-analyzer/jobs")
-async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...),instruction: str=Form("")):
+async def create_job(footage_root: str=Form(...),voiceover: UploadFile|None=File(None),
+                     script: str=Form(""),instruction: str=Form(""),visual_cues: str=Form(""),
+                     render: bool=Form(True),aspect: str=Form("16:9"),fit: str=Form("blur")):
+    _check_format(aspect,fit)
     root=Path(footage_root).expanduser()
     if not root.exists() or not root.is_dir():
-        raise HTTPException(400,"Footage folder is not accessible inside the analyzer container.")
-    if not voiceover.filename: raise HTTPException(400,"Voiceover file is required.")
-    incoming=store.root/"incoming"; incoming.mkdir(parents=True,exist_ok=True)
-    safe_name=Path(voiceover.filename).name
-    path=incoming/f"{uuid.uuid4().hex}-{safe_name}"
-    with path.open("wb") as f:
-        shutil.copyfileobj(voiceover.file,f)
+        raise HTTPException(400,"Footage folder is not accessible to the analyzer.")
+    has_voice=bool(voiceover and voiceover.filename)
+    if not has_voice and not script.strip():
+        raise HTTPException(400,"Provide a voiceover file or a script.")
+    path=None
+    if has_voice:
+        incoming=store.root/"incoming"; incoming.mkdir(parents=True,exist_ok=True)
+        path=incoming/f"{uuid.uuid4().hex}-{Path(voiceover.filename).name}"
+        with path.open("wb") as f:
+            shutil.copyfileobj(voiceover.file,f)
     # Wait briefly for the worker to persist its first real stage so clients
     # never remain stuck displaying the initial 0/1% starting state.
-    job=store.create(str(path),str(root),instruction)
+    job=store.create(str(path) if path else "",str(root),instruction,
+                     script=script.strip(),visual_cues=visual_cues.strip(),render=render,
+                     aspect=aspect,fit=fit)
     deadline=time.time()+2.0
     while time.time()<deadline:
         current=store.get(job["id"]) or job
@@ -45,7 +128,8 @@ async def create_job(voiceover: UploadFile=File(...),footage_root: str=Form(...)
 def index_status(root: str):
     p=Path(root).expanduser()
     if not p.exists() or not p.is_dir(): raise HTTPException(400,"Footage folder is not accessible.")
-    return store.cache_status(str(p))
+    from .indexer import media_files
+    return {**store.cache_status(str(p)),"video_count":len(media_files(p))}
 
 @app.delete("/api/footage-analyzer/index")
 def clear_index(root: str):
@@ -63,8 +147,6 @@ async def resolve_folder(payload: dict):
     remaining samples in that file's parent.  This keeps folder selection fast
     even when /Volumes contains large media libraries.
     """
-    import subprocess
-
     raw_name=str(payload.get("folder_name") or "").strip()
     samples=payload.get("samples") or []
     folder_name=raw_name if raw_name and raw_name not in {".",".."} and "/" not in raw_name and "\\" not in raw_name else ""
@@ -87,8 +169,7 @@ async def resolve_folder(payload: dict):
     if not clean:
         raise HTTPException(400,"The folder picker returned no usable video file information.")
 
-    search_roots=[Path("/Users"),Path("/Volumes")]
-    search_roots=[p for p in search_roots if p.exists()]
+    search_roots=_search_roots()
 
     def file_matches(path, sample):
         try:
@@ -98,25 +179,11 @@ async def resolve_folder(payload: dict):
         except OSError:
             return False
 
-    def run_find(args, timeout=12):
-        try:
-            p=subprocess.run(
-                ["find", *args],
-                capture_output=True, text=True, timeout=timeout, check=False,
-            )
-            return [Path(x) for x in p.stdout.splitlines() if x.strip()]
-        except (subprocess.TimeoutExpired, OSError):
-            return []
-
     match=None
 
     # Fast path when the browser supplied the selected folder name.
     if folder_name:
-        candidates=[]
-        for root in search_roots:
-            candidates.extend(run_find([str(root), "-type", "d", "-name", folder_name, "-print", "-prune"], timeout=8))
-            if len(candidates)>25:
-                break
+        candidates=_find(search_roots, want_dir=folder_name, timeout=8, limit=25)
 
         def candidate_score(candidate):
             score=0
@@ -154,15 +221,7 @@ async def resolve_folder(payload: dict):
             reverse=True
         )
         probe=ranked[0]
-        find_args=[]
-        for root in search_roots:
-            find_args.extend([str(root), "-type", "f", "-name", probe["name"], "-size", f"{probe['size']}c", "-print"])
-        hits=run_find(find_args, timeout=15) if probe["size"] is not None else []
-        if not hits and probe["size"] is None:
-            find_args=[]
-            for root in search_roots:
-                find_args.extend([str(root), "-type", "f", "-name", probe["name"], "-print"])
-            hits=run_find(find_args, timeout=15)
+        hits=_find(search_roots, want_file=probe["name"], size=probe["size"], timeout=15)
 
         parents=[]
         for hit in hits[:100]:
@@ -190,11 +249,11 @@ async def resolve_folder(payload: dict):
 
     if match is None:
         if not search_roots:
-            raise HTTPException(503,"The analyzer cannot see the Mac media roots. Check Docker Desktop File Sharing.")
+            raise HTTPException(503,"The analyzer cannot see any media roots. Set FOOTAGE_SEARCH_ROOTS or paste the folder path.")
         raise HTTPException(
             404,
-            "The browser supplied the footage files, but the analyzer could not resolve their Mac folder. "
-            "This can happen when the folder is outside /Users or /Volumes, or when Docker Desktop has not shared the drive."
+            "The analyzer could not locate this folder on disk. Paste its full path instead "
+            "(searched: " + ", ".join(str(p) for p in search_roots) + ")."
         )
 
     video_exts={".mp4",".mov",".mkv",".m4v",".webm",".avi",".mts",".m2ts",".ts"}
@@ -210,7 +269,7 @@ async def resolve_folder(payload: dict):
         "path":str(match),
         "folder_name":match.name,
         "video_count":video_count,
-        "source":"mounted_mac_filesystem",
+        "source":"local_filesystem",
         "matched_samples":len(clean),
     }
 
@@ -226,6 +285,35 @@ def job_edl(job_id:str):
     if not job: raise HTTPException(404,"Job not found")
     if job["status"]!="complete": raise HTTPException(409,"Analysis is not complete")
     return job["result"]
+
+def _check_format(aspect,fit):
+    from .render import SIZES
+    if aspect not in SIZES: raise HTTPException(400,f"aspect must be one of {', '.join(SIZES)}")
+    if fit not in {"blur","crop","pad"}: raise HTTPException(400,"fit must be blur, crop or pad")
+
+@app.post("/api/footage-analyzer/jobs/{job_id}/render")
+def rerender(job_id:str,payload: dict):
+    aspect=str(payload.get("aspect") or "16:9"); fit=str(payload.get("fit") or "blur")
+    _check_format(aspect,fit)
+    try:
+        return store.rerender(job_id,aspect,fit)
+    except ValueError as exc:
+        raise HTTPException(409,str(exc))
+
+@app.get("/api/footage-analyzer/jobs/{job_id}/video")
+def job_video(job_id:str, download: bool=False):
+    job=store.get(job_id)
+    if not job: raise HTTPException(404,"Job not found")
+    path=Path(job.get("video_path") or "")
+    if not job.get("video_path") or not path.exists(): raise HTTPException(409,"No rendered video for this job")
+    return FileResponse(path,media_type="video/mp4",filename=f"{job_id}.mp4" if download else None)
+
+@app.get("/api/footage-analyzer/jobs/{job_id}/metadata")
+def job_metadata(job_id:str):
+    job=store.get(job_id)
+    if not job: raise HTTPException(404,"Job not found")
+    if not job.get("metadata"): raise HTTPException(409,"Metadata is not ready")
+    return job["metadata"]
 
 @app.get("/api/footage-analyzer/jobs/{job_id}/edl/download")
 def download_edl(job_id:str):

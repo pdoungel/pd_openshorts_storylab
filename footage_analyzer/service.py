@@ -6,8 +6,40 @@ from .voiceover import transcribe, sentence_segments
 from .indexer import build_index
 from .visual import enrich_index
 from .planner import plan
-from .matcher import build_visual_edl
-from .cache import cache_dir, cache_size, human_size, seed_from_job, clear_cache
+from .matcher import build_visual_edl, _text as _shot_text
+from .embeddings import warm
+from .rerank import choose
+from .metadata import generate as generate_metadata
+from .render import render as render_video, SIZES as RENDER_SIZES
+from .cache import cache_dir, cache_size, human_size, seed_from_job, clear_cache, replace_file
+
+def export_dir():
+    default=Path(os.getenv("FOOTAGE_ANALYZER_WORKDIR","workspace/footage_analyzer")).expanduser().resolve().parent.parent/"exports"
+    return Path(os.getenv("FOOTAGE_EXPORT_DIR") or default)
+
+
+def export_video(path,job,meta):
+    """Copy the render to the exports folder with a readable name, plus the YouTube text beside it."""
+    import re, shutil
+    stem=Path(job.get("voiceover_original_name") or "video").stem
+    stem=re.sub(r"^[0-9a-f]{32}-","",stem)
+    stem=re.sub(r"[^A-Za-z0-9._ -]+","_",stem).strip() or "video"
+    stamp=time.strftime("%Y%m%d-%H%M")
+    aspect=(job.get("aspect") or "16:9").replace(":","x")
+    out_dir=export_dir(); out_dir.mkdir(parents=True,exist_ok=True)
+    target=out_dir/f"{stem}_{aspect}_{stamp}.mp4"
+    shutil.copy2(path,target)
+    if meta:
+        sections=[
+            ("TITLE", meta.get("title", "")),
+            ("TITLE OPTIONS", "\n".join(meta.get("title_options") or [])),
+            ("DESCRIPTION", meta.get("description", "")),
+            ("TAGS", ", ".join(meta.get("tags") or [])),
+        ]
+        text="\n\n".join(f"{name}\n{body}" for name,body in sections)
+        target.with_suffix(".youtube.txt").write_text(text,encoding="utf-8")
+    return str(target)
+
 
 class JobStore:
     def __init__(self, root=None):
@@ -17,15 +49,49 @@ class JobStore:
 
     def _save(self,j):
         p=self.root/j["id"]; p.mkdir(parents=True,exist_ok=True)
-        tmp=p/"job.json.tmp"; tmp.write_text(json.dumps(j,ensure_ascii=False,indent=2),encoding="utf-8"); tmp.replace(p/"job.json")
+        tmp=p/"job.json.tmp"; tmp.write_text(json.dumps(j,ensure_ascii=False,indent=2),encoding="utf-8"); replace_file(tmp,p/"job.json")
 
-    def create(self,voiceover,footage_root,instruction=""):
+    def _render(self,jid,result,voice,work,meta,base_progress=90):
+        j=self.get(jid)
+        aspect=j.get("aspect") or "16:9"; fit=j.get("fit") or "blur"
+        def render_progress(done,total):
+            self.update(jid,stage="rendering",progress=base_progress+int((99-base_progress)*done/max(total,1)),
+                        message=f"🎬 Rendering {aspect} video · clip {done}/{total}")
+        try:
+            path=render_video(result,voice,work/"final.mp4",progress=render_progress,aspect=aspect,fit=fit)["path"]
+        except Exception as exc:
+            return "","",str(exc)
+        try:
+            export=export_video(path,j,meta)
+        except Exception as exc:
+            print(f"[footage-analyzer] export copy failed: {exc}",flush=True)
+            export=""
+        return path,export,None
+
+    def rerender(self,jid,aspect,fit):
+        j=self.get(jid)
+        if not j or j.get("status")!="complete" or not j.get("result"):
+            raise ValueError("Only a completed analysis can be re-rendered.")
+        work=self.root/jid
+        voice=Path(j.get("voiceover_job_path") or work/"script_voiceover.wav")
+        self.update(jid,status="processing",stage="rendering",progress=1,aspect=aspect,fit=fit,
+                    message=f"🎬 Re-rendering as {aspect}")
+        def worker():
+            path,export,err=self._render(jid,j["result"],voice,work,j.get("metadata"),base_progress=1)
+            self.update(jid,status="complete",stage="complete",progress=100,video_path=path,export_path=export,
+                        render_error=err,message=f"Complete · re-rendered as {aspect}" if path else f"Re-render failed · {err}")
+        threading.Thread(target=worker,daemon=True,name=f"footage-render-{jid[:8]}").start()
+        return self.get(jid)
+
+    def create(self,voiceover,footage_root,instruction="",script="",visual_cues="",render=True,aspect="16:9",fit="blur"):
         jid=str(uuid.uuid4()); root=str(Path(footage_root).expanduser().resolve())
-        original_name=Path(voiceover).name
+        original_name=Path(voiceover).name if voiceover else "script_voiceover.wav"
         job={"id":jid,"status":"processing","stage":"starting","progress":0,"message":"Starting analyzer worker…","current_file":"",
              "voiceover":voiceover,"voiceover_original_name":original_name,"voiceover_job_path":"",
              "voiceover_sha256":"","voiceover_duration":0,"transcript_segment_count":0,
-             "footage_root":root,"instruction":instruction,"error":None,"result":None,
+             "footage_root":root,"instruction":instruction,"script":script,"visual_cues":visual_cues,
+             "render":bool(render),"aspect":aspect,"fit":fit,"video_path":"","export_path":"","render_error":None,"metadata":None,
+             "error":None,"result":None,
              "updated_at":time.time(),"update_seq":0}
         with self.lock:
             self.jobs[jid]=job; self._save(job)
@@ -48,15 +114,14 @@ class JobStore:
         # Persisted job.json is authoritative. This prevents the UI from
         # remaining on the initial POST response after a process restart.
         p=self.root/jid/"job.json"
-        try:
-            if p.exists():
-                disk=json.loads(p.read_text(encoding="utf-8"))
-                with self.lock:
-                    self.jobs[jid]=dict(disk)
-                return disk
-        except Exception:
-            pass
         with self.lock:
+            try:
+                if p.exists():
+                    disk=json.loads(p.read_text(encoding="utf-8"))
+                    self.jobs[jid]=dict(disk)
+                    return disk
+            except Exception:
+                pass
             return dict(self.jobs[jid]) if jid in self.jobs else None
 
     def update(self,jid,**kw):
@@ -115,6 +180,16 @@ class JobStore:
             # could spend a long time copying large visual indexes here, leaving
             # the UI at 2% and making it look as if voiceover processing never began.
             work.mkdir(parents=True,exist_ok=True)
+            if not j.get("voiceover"):
+                tts_out=work/"script_voiceover.wav"
+                if not tts_out.exists():
+                    def tts_progress(done,total):
+                        self.update(jid,stage="voiceover_synthesis",progress=2+int(3*done/max(total,1)),
+                                    message=f"🗣️ Generating voiceover from script · part {min(done+1,total)}/{total}")
+                    from .tts import synthesize
+                    synthesize(j["script"],str(tts_out),progress=tts_progress)
+                self.update(jid,voiceover=str(tts_out))
+                j=self.get(jid)
             # Keep the exact uploaded filename inside the job directory so the
             # UI and persisted job state can prove which file is being processed.
             src=Path(j["voiceover"]).resolve()
@@ -288,6 +363,17 @@ class JobStore:
             data=enrich_index(str(idx),str(vis),progress=visual_progress)
             analyzed_shots=[s for s in data.get("shots",[]) if str(s.get("description","")).strip()]
             visual_failed=sum(1 for s in data.get("shots",[]) if not str(s.get("description","")).strip())
+            warnings=[]
+            try:
+                vm=json.loads((cache/"visual_manifest.json").read_text(encoding="utf-8"))
+                if any("RESOURCE_EXHAUSTED" in str(v.get("error","")) for v in vm.values() if v.get("status")=="failed"):
+                    warnings.append(
+                        f"Gemini quota exhausted: {visual_failed} shots could not be analyzed and were left out of "
+                        "matching. Free-tier keys allow about 20 requests per model per day; retry later (finished "
+                        "shots are kept) or enable billing on the Gemini key."
+                    )
+            except Exception:
+                pass
             self.update(
                 jid,
                 stage="visual_analysis",
@@ -309,21 +395,32 @@ class JobStore:
                 )
 
             self.update(jid,stage="visual_plan",progress=72,message="Planning visual intent from narration")
-            req=plan(narr,j["instruction"])
+            cues=j.get("visual_cues","")
+            req=plan(narr,j["instruction"],cues)
             (work/"visual_plan.json").write_text(
                 json.dumps({"version":2,"requirements":req},ensure_ascii=False,indent=2),
                 encoding="utf-8",
             )
+            self.update(jid,stage="matching",progress=76,
+                        message=f"Embedding {len(analyzed_shots)} scenes and {len(req)} visual intents")
+            warm([_shot_text(s) for s in analyzed_shots]+[r.get("visual_query","") for r in req])
+            def rerank_progress(done,total):
+                self.update(jid,stage="matching",progress=78+int(8*done/max(total,1)),
+                            message=f"Editor pass · choosing best shot per line · batch {min(done+1,total)}/{total}")
+            preferred=choose(narr,req,analyzed_shots,cues,progress=rerank_progress)
             self.update(
                 jid,
                 stage="matching",
-                progress=84,
+                progress=86,
                 message=f"Matching {len(narr)} narration segments to {len(analyzed_shots)} usable scenes",
             )
-            edl=build_visual_edl(narr,req,analyzed_shots)
-            duration=max((float(x["end"]) for x in narr),default=0)
+            edl=build_visual_edl(narr,req,analyzed_shots,preferred)
+            duration=max(float(tr.get("duration",0) or 0),max((float(x["end"]) for x in narr),default=0))
             result={
-                "version":4,
+                "version":5,
+                "reranked":bool(preferred),
+                "warnings":warnings+([] if preferred or not os.getenv("GEMINI_API_KEY") else
+                                     ["Editor pass (Gemini rerank) was unavailable; shots were chosen by embeddings only."]),
                 "master":"voiceover",
                 "voiceover_duration":duration,
                 "clips":edl,
@@ -335,8 +432,20 @@ class JobStore:
                 "coverage_complete":True,
             }
             (work/"edl.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.update(jid,result=result)
+
+            self.update(jid,stage="metadata",progress=88,message="Writing YouTube title, description and tags")
+            meta=generate_metadata(narr,edl,duration,j["instruction"])
+            (work/"metadata.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.update(jid,metadata=meta)
+
+            video_path,export_path,render_error="","",None
+            if j.get("render",True):
+                video_path,export_path,render_error=self._render(jid,result,voice,work,meta)
             self.update(jid,status="complete",stage="complete",progress=100,
-                        message=f"Complete · {len(edl)} timeline clips",result=result,index_stats=self.cache_status(root))
+                        message=f"Complete · {len(edl)} timeline clips" + (" · video rendered" if video_path else ""),
+                        video_path=video_path,export_path=export_path,render_error=render_error,
+                        index_stats=self.cache_status(root))
         except Exception as e:
             current=self.get(jid) or {}
             self.update(jid,status="failed",stage="error",

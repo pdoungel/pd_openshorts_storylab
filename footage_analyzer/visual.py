@@ -55,55 +55,58 @@ def sample_frames(path, start, end, count=4):
     return sheet
 
 
-def describe_shot(path, start, end):
-    from google import genai
+FIELDS = ("subjects", "actions", "setting", "visual_style", "text_visible", "tags")
 
-    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not key:
-        raise RuntimeError("Set GEMINI_API_KEY or GOOGLE_API_KEY.")
 
-    sheet = sample_frames(path, start, end, count=int(os.getenv("FOOTAGE_VISUAL_FRAME_COUNT", "4")))
-    prompt = (
-        "Inspect every panel in this footage contact sheet. Return ONLY valid JSON with "
-        "description, subjects, actions, setting, visual_style, text_visible, tags. "
-        "Describe only visible evidence. Do not infer identity, date, event, location, "
-        "historical facts, or anything not visible. Use short concrete phrases."
-    )
-
-    max_attempts = max(1, int(os.getenv("FOOTAGE_VISUAL_RETRIES", "3")))
-    last_error = None
-    for attempt in range(max_attempts):
-        try:
-            client = genai.Client(api_key=key)
-            response = client.models.generate_content(
-                model=os.getenv("FOOTAGE_VISION_MODEL", "gemini-3.6-flash"),
-                contents=[prompt, sheet],
-            )
-            data = _json(getattr(response, "text", ""))
-            break
-        except Exception as exc:
-            last_error = exc
-            message = str(exc).lower()
-            transient = (
-                "429" in message or "rate" in message or "503" in message
-                or "502" in message or "500" in message
-                or "timeout" in message or "temporar" in message
-                or "client has been closed" in message
-            )
-            if attempt + 1 >= max_attempts or not transient:
-                raise
-            time.sleep(min(8.0, 1.5 * (2 ** attempt)))
-    else:
-        raise last_error
-
-    for key_name in ("subjects", "actions", "setting", "visual_style", "text_visible", "tags"):
+def _clean(data):
+    data = dict(data or {})
+    for key_name in FIELDS:
         value = data.get(key_name, [])
         data[key_name] = value if isinstance(value, list) else [str(value)]
-
     data["description"] = str(data.get("description", "")).strip()
     if not data["description"]:
         raise ValueError("Gemini returned an empty visual description")
     return data
+
+
+def describe_shots(shots):
+    """Describe several shots in one Gemini request (one contact sheet per shot).
+
+    Batching matters: free-tier keys allow ~20 requests per model per day, and a
+    library has thousands of shots.
+    """
+    from . import gemini
+
+    frame_count = int(os.getenv("FOOTAGE_VISUAL_FRAME_COUNT", "4"))
+    contents = [
+        "Each image below is a contact sheet of frames sampled from one footage shot, labelled "
+        "with its shot_id. Inspect every panel. Return ONLY valid JSON: {\"shots\": [{\"shot_id\", "
+        "\"description\", \"subjects\", \"actions\", \"setting\", \"visual_style\", \"text_visible\", "
+        "\"tags\"}]} with one entry per shot_id. Describe only visible evidence. Do not infer "
+        "identity, date, event, location, historical facts, or anything not visible. Use short "
+        "concrete phrases; lists for everything except description."
+    ]
+    for shot in shots:
+        contents.append(f"shot_id: {shot['id']}")
+        contents.append(sample_frames(shot["video_path"], shot["start"], shot["end"], count=frame_count))
+
+    data = _json(gemini.generate("vision", contents))
+    entries = data.get("shots", []) if isinstance(data, dict) else data
+    by_id = {str(e.get("shot_id")): e for e in entries or [] if isinstance(e, dict)}
+    results = {}
+    for shot in shots:
+        try:
+            results[shot["id"]] = _clean(by_id.get(shot["id"]))
+        except Exception as exc:
+            results[shot["id"]] = exc
+    return results
+
+
+def describe_shot(path, start, end):
+    result = describe_shots([{"id": "shot", "video_path": path, "start": start, "end": end}])["shot"]
+    if isinstance(result, Exception):
+        raise result
+    return result
 
 
 def enrich_index(index_path, output_path, progress=None, limit=None):
@@ -164,44 +167,43 @@ def enrich_index(index_path, output_path, progress=None, limit=None):
 
     workers = max(1, min(int(os.getenv("FOOTAGE_VISUAL_WORKERS", "2")), 4))
 
-    def analyze(shot):
-        return describe_shot(shot["video_path"], shot["start"], shot["end"])
+    size = max(1, int(os.getenv("FOOTAGE_VISUAL_BATCH", "8")))
+    batches = [pending[i:i + size] for i in range(0, len(pending), size)]
 
-    if pending:
+    def analyze(batch):
+        try:
+            return describe_shots(batch)
+        except Exception as exc:
+            return {shot["id"]: exc for shot in batch}
+
+    if batches:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="visual-shot") as pool:
-            futures = {pool.submit(analyze, shot): shot for shot in pending}
+            futures = {pool.submit(analyze, batch): batch for batch in batches}
             for future in as_completed(futures):
-                shot = futures[future]
-                sid = shot["id"]
-                try:
-                    shot.update(future.result())
-                    manifest[sid] = {
-                        "status": "complete",
-                        "video_path": shot["video_path"],
-                        "start": shot["start"],
-                        "end": shot["end"],
-                    }
-                except Exception as exc:
-                    failed += 1
-                    manifest[sid] = {
-                        "status": "failed",
-                        "video_path": shot["video_path"],
-                        "start": shot["start"],
-                        "end": shot["end"],
-                        "error": str(exc),
-                    }
+                batch = futures[future]
+                results = future.result()
+                for shot in batch:
+                    sid = shot["id"]
+                    outcome = results.get(sid)
+                    entry = {"video_path": shot["video_path"], "start": shot["start"], "end": shot["end"]}
+                    if isinstance(outcome, dict):
+                        shot.update(outcome)
+                        manifest[sid] = {"status": "complete", **entry}
+                    else:
+                        failed += 1
+                        manifest[sid] = {"status": "failed", **entry, "error": str(outcome)[:500]}
+                    done += 1
 
-                done += 1
                 atomic_json(manifest_path, manifest)
                 data["shots"] = shots
                 data["version"] = 5
                 atomic_json(output, data)
 
                 if progress:
-                    name = Path(shot["video_path"]).name
+                    last = batch[-1]
                     progress(
                         done, total,
-                        f"{name} · {shot['start']:.1f}–{shot['end']:.1f}s",
+                        f"{Path(last['video_path']).name} · {len(batch)} shots per request",
                         {"reused": reused, "failed": failed},
                     )
 
