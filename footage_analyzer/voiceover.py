@@ -100,11 +100,15 @@ def _plain(value: Any) -> Any:
 
     if hasattr(value, "__dict__"):
         try:
-            return {
-                k: _plain(v)
-                for k, v in vars(value).items()
-                if not k.startswith("_")
-            }
+            data = {k: v for k, v in vars(value).items() if not k.startswith("_")}
+            # Attributes defined on the class (not the instance) are invisible to vars().
+            for k in dir(value):
+                if k.startswith("_") or k in data:
+                    continue
+                attr = getattr(value, k, None)
+                if not callable(attr):
+                    data[k] = attr
+            return {k: _plain(v) for k, v in data.items()}
         except Exception:
             pass
 

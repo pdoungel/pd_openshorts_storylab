@@ -39,13 +39,26 @@ export default function FootageAnalyzerTab() {
   const mountedRef = useRef(true);
   const pollingRef = useRef(false);
 
-  const footageCount = footage.length;
+  const [inputMode, setInputMode] = useState('voiceover');
+  const [script, setScript] = useState('');
+  const [visualCues, setVisualCues] = useState('');
+  const [copied, setCopied] = useState('');
+  const [aspect, setAspect] = useState(() => { try { return localStorage.getItem('fa_aspect') || '9:16'; } catch (_) { return '9:16'; } });
+  const [fit, setFit] = useState(() => { try { return localStorage.getItem('fa_fit') || 'blur'; } catch (_) { return 'blur'; } });
+  useEffect(() => { try { localStorage.setItem('fa_aspect', aspect); localStorage.setItem('fa_fit', fit); } catch (_) { /* storage unavailable */ } }, [aspect, fit]);
+  const hasNarration = inputMode === 'voiceover' ? !!voiceover : !!script.trim();
+  const [pastedPath, setPastedPath] = useState('');
+  const [pastedCount, setPastedCount] = useState(0);
+  const footageCount = footage.length || pastedCount;
   const totalSize = useMemo(() => footage.reduce((n, f) => n + (f.size || 0), 0), [footage]);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (pollRef.current) window.clearTimeout(pollRef.current);
-    if (pollAbortRef.current) pollAbortRef.current.abort();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollRef.current) window.clearTimeout(pollRef.current);
+      if (pollAbortRef.current) pollAbortRef.current.abort();
+    };
   }, []);
 
   const refreshIndex = async (root = footageRoot) => {
@@ -115,19 +128,23 @@ export default function FootageAnalyzerTab() {
   };
 
   const startAnalysis = async () => {
-    if (!voiceover || !footageRoot.trim()) {
-      setError('Select a voiceover and choose a footage folder that can be located by the analyzer.');
+    if (!hasNarration || !footageRoot.trim()) {
+      setError(`Add a ${inputMode === 'voiceover' ? 'voiceover' : 'script'} and choose a footage folder that can be located by the analyzer.`);
       return;
     }
     setError('');
     setTimeline([]);
     setUploadProgress(0);
-    setJob({ status: 'queued', stage: 'queued', progress: 0, message: 'Uploading voiceover to Footage Analyzer…' });
+    setJob({ status: 'queued', stage: 'queued', progress: 0, message: 'Sending to Footage Analyzer…' });
     try {
       const form = new FormData();
-      form.append('voiceover', voiceover);
+      if (inputMode === 'voiceover') form.append('voiceover', voiceover);
+      else form.append('script', script);
       form.append('footage_root', footageRoot.trim());
       form.append('instruction', instruction);
+      form.append('visual_cues', visualCues);
+      form.append('aspect', aspect);
+      form.append('fit', fit);
       // Use XMLHttpRequest for the multipart upload. Some desktop/webview
       // clients can close a fetch request while a File-backed FormData body is
       // being sent; XHR keeps the upload request alive until the response arrives.
@@ -233,6 +250,7 @@ export default function FootageAnalyzerTab() {
     setFolderResolutionError('');
     setFootageRoot('');
     setFootage([]);
+    setPastedCount(0);
     setFootageFolderName('');
     setIndexInfo(null);
     setResolvingFolder(true);
@@ -275,6 +293,44 @@ export default function FootageAnalyzerTab() {
       }
     } finally {
       if (typeof window.showDirectoryPicker === 'function' && mountedRef.current) setResolvingFolder(false);
+    }
+  };
+
+  const rerender = async () => {
+    if (!job?.id) return;
+    setError('');
+    try {
+      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/render`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aspect, fit })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Re-render failed to start');
+      setJob(body);
+      pollJob(job.id);
+    } catch (e) {
+      setError(e.message || 'Re-render failed to start');
+    }
+  };
+
+  const applyPastedPath = async () => {
+    const root = pastedPath.trim().replace(/^["']|["']$/g, '');
+    if (!root || resolvingFolder) return;
+    setError('');
+    setFolderResolutionError('');
+    setFootage([]);
+    setResolvingFolder(true);
+    try {
+      const res = await fetch(`${ANALYZER_URL}/api/footage-analyzer/index?root=${encodeURIComponent(root)}`, { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'The analyzer cannot access this folder.');
+      setPastedCount(body.video_count || 0);
+      setFootageFolderName(root.split(/[\\/]/).filter(Boolean).pop() || root);
+      setFootageRoot(body.root || root);
+    } catch (err) {
+      setFootageRoot('');
+      setFolderResolutionError(err?.message || 'The analyzer cannot access this folder.');
+    } finally {
+      if (mountedRef.current) setResolvingFolder(false);
     }
   };
 
@@ -333,11 +389,32 @@ export default function FootageAnalyzerTab() {
               <h2 className="font-display lowercase text-xl text-ink">Give the analyzer your timeline</h2>
             </div>
 
-            <label className="block">
-              <span className="readout block mb-2">voiceover · wav / mp3 / m4a</span>
-              <input type="file" accept="audio/*" className="input-field" onChange={e => setVoiceover(e.target.files?.[0] || null)} />
-            </label>
-            {voiceover && (
+            <div className="flex gap-2" role="tablist" aria-label="Narration source">
+              {[['voiceover', 'voiceover file'], ['script', 'script → AI voiceover']].map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={inputMode === mode}
+                  className={`btn-quiet text-xs ${inputMode === mode ? 'border-brass text-ink' : ''}`}
+                  onClick={() => setInputMode(mode)}
+                >{label}</button>
+              ))}
+            </div>
+
+            {inputMode === 'script' ? (
+              <label className="block">
+                <span className="readout block mb-2">script · narrated with Gemini TTS, then used as the timeline</span>
+                <textarea className="input-field min-h-[160px] resize-y" placeholder="Paste the full narration script. Blank lines separate paragraphs." value={script} onChange={e => setScript(e.target.value)} />
+                <p className="text-[11px] text-muted mt-1">{script.trim() ? `${script.trim().split(/\s+/).length} words · about ${Math.max(1, Math.round(script.trim().split(/\s+/).length / 150))} min of narration` : 'The generated voiceover is included in the final video.'}</p>
+              </label>
+            ) : (
+              <label className="block">
+                <span className="readout block mb-2">voiceover · wav / mp3 / m4a</span>
+                <input type="file" accept="audio/*" className="input-field" onChange={e => setVoiceover(e.target.files?.[0] || null)} />
+              </label>
+            )}
+            {inputMode === 'voiceover' && voiceover && (
               <div className="rounded-input border border-rule bg-paper p-3 flex items-center gap-3">
                 <CheckCircle2 size={17} className="text-brass shrink-0" />
                 <div className="min-w-0 flex-1">
@@ -372,6 +449,18 @@ export default function FootageAnalyzerTab() {
               <p className="text-[11px] text-muted mt-2">
                 Select one footage folder. OpenShorts recursively discovers supported videos; individual video selection is not required.
               </p>
+              <div className="flex gap-2 mt-3">
+                <input
+                  type="text"
+                  className="flex-1 min-w-0 rounded-input border border-rule bg-paper px-3 py-2 text-sm text-ink2 placeholder:text-muted outline-none focus:border-brass"
+                  placeholder="or paste folder path, e.g. D:\Footage\Project"
+                  value={pastedPath}
+                  onChange={e => setPastedPath(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') applyPastedPath(); }}
+                  aria-label="Footage folder path"
+                />
+                <button type="button" className="btn-quiet" disabled={!pastedPath.trim() || resolvingFolder} onClick={applyPastedPath}>use path</button>
+              </div>
             </div>
 
             <div className="rounded-input border border-rule bg-paper p-3 flex items-start gap-3">
@@ -389,7 +478,7 @@ export default function FootageAnalyzerTab() {
                     <p className="text-[11px] text-brass mt-1 leading-relaxed">{folderResolutionError}</p>
                   </>
                 ) : (
-                  <p className="text-xs text-muted mt-1">{footageCount ? `${footageCount} video files detected · checking analyzer access…` : 'Select a footage folder from Finder.'}</p>
+                  <p className="text-xs text-muted mt-1">{footageCount ? `${footageCount} video files detected · checking analyzer access…` : 'Choose a footage folder or paste its path.'}</p>
                 )}
               </div>
             </div>
@@ -410,12 +499,37 @@ export default function FootageAnalyzerTab() {
               </div>
             )}
 
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="readout block mb-2">video format</span>
+                <select className="input-field" value={aspect} onChange={e => setAspect(e.target.value)}>
+                  <option value="9:16">9:16 vertical (Shorts, Reels, TikTok)</option>
+                  <option value="16:9">16:9 horizontal (YouTube)</option>
+                  <option value="1:1">1:1 square</option>
+                  <option value="4:5">4:5 portrait feed</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="readout block mb-2">fit footage</span>
+                <select className="input-field" value={fit} onChange={e => setFit(e.target.value)}>
+                  <option value="blur">fit + blurred background</option>
+                  <option value="crop">fill (crop center)</option>
+                  <option value="pad">fit + black bars</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="readout block mb-2">optional visual cues · alternatives to search for</span>
+              <input type="text" className="input-field" placeholder="e.g. city skyline at night, hands typing, crowds, maps" value={visualCues} onChange={e => setVisualCues(e.target.value)} />
+            </label>
+
             <label className="block">
               <span className="readout block mb-2">optional editorial direction</span>
               <textarea className="input-field min-h-[92px] resize-y" placeholder="e.g. Prefer archival-looking footage and wide establishing shots when exact subjects are unavailable." value={instruction} onChange={e => setInstruction(e.target.value)} />
             </label>
 
-            {voiceover && footageRoot && (
+            {hasNarration && footageRoot && (
               <div className="rounded-input border border-rule bg-paper p-3 flex items-center gap-3">
                 <CheckCircle2 size={18} className="text-brass shrink-0" />
                 <div>
@@ -426,7 +540,7 @@ export default function FootageAnalyzerTab() {
             )}
 
             <div className="flex items-center gap-3">
-              <button className="btn-primary flex-1" disabled={!voiceover || !footageRoot.trim() || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
+              <button className="btn-primary flex-1" disabled={!hasNarration || !footageRoot.trim() || job?.status === 'processing' || job?.status === 'queued'} onClick={startAnalysis}>
                 {job?.status === 'processing' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                 {job?.status === 'queued' ? ` uploading… ${uploadProgress}%` : job?.status === 'processing' ? ' analyzing…' : job?.status === 'failed' ? ' retry analysis' : ' analyze footage'}
               </button>
@@ -444,7 +558,10 @@ export default function FootageAnalyzerTab() {
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-medium text-ink2">
                         {job.status === 'queued' ? 'Uploading voiceover…' : job.status === 'failed' ? 'Analysis stopped — saved progress is available' : (
+                          job.stage === 'voiceover_synthesis' ? '🗣️ Generating voiceover from script…' :
                           job.stage === 'transcription' ? '🎙️ Transcribing audio…' :
+                          job.stage === 'metadata' ? '📝 Writing title, description and tags…' :
+                          job.stage === 'rendering' ? '🎬 Rendering final video…' :
                           job.stage === 'indexing' ? '🎬 Indexing / analyzing video files…' :
                           job.stage === 'visual_analysis' ? '🧠 Analyzing video…' :
                           job.stage === 'visual_plan' ? '🧭 Building visual plan…' :
@@ -528,7 +645,7 @@ export default function FootageAnalyzerTab() {
             {error && <div className="border border-rule rounded-input p-3 text-xs text-muted"><AlertTriangle size={14} className="inline mr-2 text-brass" />{error}</div>}
 
             <div className="border-t border-rule pt-4 grid grid-cols-3 gap-3 text-center">
-              <div><Mic2 size={15} className="mx-auto text-brass mb-1" /><p className="readout">voiceover</p><p className="text-sm text-ink2 mt-1">{voiceover ? '✓ ready' : 'missing'}</p></div>
+              <div><Mic2 size={15} className="mx-auto text-brass mb-1" /><p className="readout">{inputMode === 'script' ? 'script' : 'voiceover'}</p><p className="text-sm text-ink2 mt-1">{hasNarration ? '✓ ready' : 'missing'}</p></div>
               <div><Film size={15} className="mx-auto text-brass mb-1" /><p className="readout">footage</p><p className="text-sm text-ink2 mt-1">{footageRoot ? '✓ ready' : resolvingFolder ? 'locating…' : 'missing'}</p></div>
               <div><Search size={15} className="mx-auto text-brass mb-1" /><p className="readout">matching</p><p className="text-sm text-ink2 mt-1">semantic</p></div>
             </div>
@@ -540,8 +657,91 @@ export default function FootageAnalyzerTab() {
                 <p className="eyebrow mb-2">VISUAL TIMELINE</p>
                 <h2 className="font-display lowercase text-xl text-ink">Voiceover → usable footage</h2>
               </div>
-              {job?.status === 'complete' && <a className="btn-quiet" href={`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/edl/download`}><Download size={13} /> EDL</a>}
+              {job?.status === 'complete' && job.id && <a className="btn-quiet" href={`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/edl/download`}><Download size={13} /> EDL</a>}
             </div>
+
+            {job?.status === 'complete' && job.id && (
+              <div className="space-y-4 mb-5">
+                {(job.result?.warnings || []).map(w => (
+                  <div key={w} className="border border-rule rounded-input p-3 text-xs text-muted leading-relaxed"><AlertTriangle size={13} className="inline mr-2 text-brass" />{w}</div>
+                ))}
+                {job.render_error && (
+                  <div className="border border-rule rounded-input p-3 text-xs text-muted"><AlertTriangle size={13} className="inline mr-2 text-brass" />Render failed: {job.render_error}</div>
+                )}
+                {job.video_path && (
+                  <div className="border border-rule rounded-input overflow-hidden bg-paper">
+                    <div className="bg-black flex justify-center">
+                      <video
+                        key={job.updated_at}
+                        className={`bg-black ${['9:16', '4:5'].includes(job.aspect) ? 'max-h-[640px] w-auto' : 'w-full'}`}
+                        style={{ aspectRatio: (job.aspect || '16:9').replace(':', ' / ') }}
+                        controls
+                        preload="metadata"
+                        src={`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/video?v=${job.updated_at}`}
+                      />
+                    </div>
+                    <div className="p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted">Final video · {job.aspect || '16:9'} · {formatTime(job.result?.voiceover_duration)}</p>
+                        <a className="btn-quiet text-xs" href={`${ANALYZER_URL}/api/footage-analyzer/jobs/${job.id}/video?download=true`}><Download size={13} /> MP4</a>
+                      </div>
+                      {job.export_path && (
+                        <p className="text-[11px] text-muted break-all">Saved to <span className="text-ink2">{job.export_path}</span> (YouTube text beside it as .youtube.txt)</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {job.result && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="readout">re-render as</span>
+                    <select className="input-field !w-auto !py-1 text-xs" value={aspect} onChange={e => setAspect(e.target.value)}>
+                      <option value="9:16">9:16</option><option value="16:9">16:9</option><option value="1:1">1:1</option><option value="4:5">4:5</option>
+                    </select>
+                    <select className="input-field !w-auto !py-1 text-xs" value={fit} onChange={e => setFit(e.target.value)}>
+                      <option value="blur">blurred background</option><option value="crop">crop center</option><option value="pad">black bars</option>
+                    </select>
+                    <button type="button" className="btn-quiet text-xs" onClick={rerender}><RefreshCw size={13} /> re-render</button>
+                    <span className="text-muted">no re-analysis needed</span>
+                  </div>
+                )}
+                {job.metadata && (() => {
+                  const m = job.metadata;
+                  const tagText = (m.tags || []).join(', ');
+                  const copy = async (key, text) => {
+                    try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 1500); } catch (_) { setCopied(''); }
+                  };
+                  const CopyBtn = ({ k, text }) => (
+                    <button type="button" className="text-[11px] text-muted hover:text-ink2" onClick={() => copy(k, text)}>{copied === k ? 'copied' : 'copy'}</button>
+                  );
+                  return (
+                    <div className="border border-rule rounded-input p-4 bg-paper space-y-4">
+                      <p className="eyebrow">YOUTUBE PACKAGE{m.provider === 'fallback' ? ' · basic (Gemini unavailable)' : ''}</p>
+                      <div>
+                        <div className="flex items-center justify-between"><span className="readout">title</span><CopyBtn k="title" text={m.title} /></div>
+                        <p className="text-sm text-ink2 mt-1">{m.title}</p>
+                        {(m.title_options || []).filter(t => t !== m.title).length > 0 && (
+                          <ul className="mt-2 space-y-1">
+                            {m.title_options.filter(t => t !== m.title).map(t => (
+                              <li key={t} className="flex items-center justify-between gap-3 text-xs text-muted"><span>{t}</span><CopyBtn k={t} text={t} /></li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between"><span className="readout">description</span><CopyBtn k="description" text={m.description} /></div>
+                        <p className="text-xs text-muted mt-1 whitespace-pre-line leading-relaxed max-h-56 overflow-y-auto custom-scrollbar">{m.description}</p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between"><span className="readout">tags · {(m.tags || []).length}</span><CopyBtn k="tags" text={tagText} /></div>
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {(m.tags || []).map(t => <span key={t} className="text-[11px] text-ink2 border border-rule rounded-full px-2 py-0.5">{t}</span>)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {!timeline.length ? (
               <div className="h-[440px] flex flex-col items-center justify-center text-center border border-dashed border-rule2 rounded-card px-6">

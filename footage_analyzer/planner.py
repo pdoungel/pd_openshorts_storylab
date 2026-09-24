@@ -57,7 +57,7 @@ def _normalise(requirements, narrations):
     return [by_index.get(n["index"], fallback[n["index"]]) for n in narrations]
 
 
-def plan(narrations, instruction=""):
+def plan(narrations, instruction="", visual_cues=""):
     payload = [
         {"index": n["index"], "start": n["start"], "end": n["end"], "text": n["text"]}
         for n in narrations
@@ -74,18 +74,17 @@ def plan(narrations, instruction=""):
         "footage when exact footage is absent. Never invent evidence. Return ONLY valid JSON with "
         "a requirements array. Every input index MUST appear exactly once. Each requirement must "
         "contain narration_index, visual_query, preferred_visuals, avoid and rationale. "
-        "Editorial direction: " + (instruction or "none") + "\nINPUT:\n" +
+        "Editorial direction: " + (instruction or "none") + "\n"
+        "User visual cues (alternative subjects to search for when the narration has no literal "
+        "visual, include them in preferred_visuals where relevant): " + (visual_cues or "none") +
+        "\nINPUT:\n" +
         json.dumps(payload, ensure_ascii=False)
     )
 
     try:
-        from google import genai
+        from . import gemini
 
-        response = genai.Client(api_key=key).models.generate_content(
-            model=os.getenv("FOOTAGE_PLANNER_MODEL", "gemini-3.6-flash"),
-            contents=prompt,
-        )
-        data = _json(getattr(response, "text", ""))
+        data = _json(gemini.generate("planner", prompt))
         requirements = data.get("requirements", []) if isinstance(data, dict) else []
         return _normalise(requirements, narrations)
     except Exception:

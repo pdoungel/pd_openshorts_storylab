@@ -1,7 +1,19 @@
 """Durable per-footage-library cache used by Footage Analyzer."""
 from __future__ import annotations
-import hashlib, json, os, shutil, tempfile
+import hashlib, json, os, shutil, tempfile, time
 from pathlib import Path
+
+def replace_file(src, dst, attempts=20) -> None:
+    # Windows refuses to replace a file another handle (a reader, antivirus, the
+    # search indexer) has open; those locks are brief, so retry instead of failing.
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
 
 def root_key(root: str) -> str:
     return hashlib.sha256(str(Path(root).expanduser().resolve()).encode()).hexdigest()[:24]
@@ -13,7 +25,7 @@ def atomic_json(path: Path, data) -> None:
         with os.fdopen(fd,"w",encoding="utf-8") as f:
             json.dump(data,f,ensure_ascii=False,indent=2)
             f.flush(); os.fsync(f.fileno())
-        os.replace(tmp,path)
+        replace_file(tmp,path)
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 

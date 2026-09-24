@@ -80,7 +80,16 @@ def _concept_score(requirement, shot):
         ("context", context, 0.15),
     ]
     active = [(score, weight) for name, score, weight in weighted if concepts[name]]
-    return sum(score * weight for score, weight in active) / sum(weight for _, weight in active) if active else 0.0
+    field_score = sum(score * weight for score, weight in active) / sum(weight for _, weight in active) if active else 0.0
+
+    # A shot that fully shows one requested visual is a direct illustration even
+    # when the other requested visuals are absent, so the best single match counts most.
+    full_text = _text(shot)
+    per_visual = [_concept_overlap(item, [full_text]) for item in _as_list(requirement.get("preferred_visuals"))]
+    if not per_visual:
+        return field_score
+    visual_score = 0.6 * max(per_visual) + 0.4 * (sum(per_visual) / len(per_visual))
+    return max(field_score, visual_score)
 
 
 def _match_type(score, concept_score):
@@ -172,7 +181,15 @@ def _clip(match, n, req, timeline_start, source_start, source_end, reused=False)
     }
 
 
-def build_visual_edl(narrations, requirements, shots):
+def _ranked(req, pool, preferred_ids):
+    ranked = rank(req, pool, len(pool))
+    if preferred_ids:
+        order = {sid: i for i, sid in enumerate(preferred_ids)}
+        ranked.sort(key=lambda m: (order.get(m["shot"]["id"], len(order)), -m["score"]))
+    return ranked[:8]
+
+
+def build_visual_edl(narrations, requirements, shots, preferred=None):
     """Build an EDL in narration order with no timeline gaps.
 
     The voiceover is the master clock. For every narration segment, the matcher
@@ -213,12 +230,17 @@ def build_visual_edl(narrations, requirements, shots):
                 s for s in valid_shots
                 if s["id"] not in used_ids and s["id"] not in attempted
             ]
-            candidates = rank(req, unused, 8) if unused else []
+            wanted = (preferred or {}).get(n["index"])
+            candidates = _ranked(req, unused, wanted) if unused else []
 
             reused = False
             if not candidates:
                 reusable = [s for s in valid_shots if s["id"] not in attempted]
-                candidates = rank(req, reusable, 8)
+                if not reusable and attempted:
+                    # Every shot already appears in this line; allow them again to fill the rest.
+                    attempted.clear()
+                    reusable = list(valid_shots)
+                candidates = _ranked(req, reusable, wanted) if reusable else []
                 reused = True
 
             if not candidates:
